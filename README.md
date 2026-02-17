@@ -1,4 +1,11 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Storage Browser POC
+
+A Proof of Concept (POC) demonstrating an Amazon S3 Storage Browser built with Next.js and AWS Amplify Gen 2. This application integrates the `@aws-amplify/ui-react-storage` component to provide a user-friendly interface for browsing, uploading, and managing S3 objects directly within a web application.
+
+## Key Features
+- **S3 Management:** Visualize and interact with Amazon S3 buckets.
+- **Modern UI:** Built with `@aws-amplify/ui-react` and Tailwind CSS.
+- **Backend Infrastructure:** Uses AWS Amplify Gen 2 (CDK-based) for cloud resources.
 
 ## Getting Started
 
