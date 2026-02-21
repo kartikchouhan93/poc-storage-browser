@@ -6,12 +6,18 @@ const fsPromises = require('fs/promises');
 const https = require('https');
 const chokidar = require('chokidar');
 const si = require('systeminformation');
+const { query, initDB } = require('./src/lib/db');
+const { initSync, stopSync } = require('./src/services/SyncEngine');
+const backendManager = require('./backend/index.js');
+
+const ROOT_PATH = '/home/abhishek/FMS';
 
 let mainWindow;
 let watcher;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
+    title: 'Cloud Vault',
     width: 1200,
     height: 800,
     autoHideMenuBar: true,
@@ -76,7 +82,57 @@ function createWindow() {
   }, 10000);
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  try {
+    await initDB();
+  } catch (err) {
+    console.error("DB Initialization Failed", err);
+  }
+  
+  if (!fs.existsSync(ROOT_PATH)) {
+      fs.mkdirSync(ROOT_PATH, { recursive: true });
+  }
+
+  console.log("@@@ root path", ROOT_PATH)
+
+  watcher = chokidar.watch(ROOT_PATH, {
+      ignored: /(^|[\/\\])\../, 
+      persistent: true,
+      ignoreInitial: true,
+      depth: 99,
+  });
+
+  watcher
+    .on('add', async (filePath) => {
+      console.log("@@@ file added", filePath)
+      if (mainWindow) mainWindow.webContents.send('file-added', filePath);
+      try { await backendManager.onLocalFileAdded(filePath, ROOT_PATH); } catch(e) {}
+    })
+    .on('change', async (filePath) => {
+      console.log("@@@ file changed", filePath)
+      if (mainWindow) mainWindow.webContents.send('file-changed', filePath);
+      try { await backendManager.onLocalFileAdded(filePath, ROOT_PATH); } catch(e) {}
+    })
+    .on('unlink', async (filePath) => {
+      console.log("@@@ file removed", filePath)
+      if (mainWindow) mainWindow.webContents.send('file-removed', filePath);
+      try { await backendManager.onLocalFileRemoved(filePath, ROOT_PATH); } catch(e) { console.error('[Watcher] unlink handler error:', e.message); }
+    })
+    .on('addDir', (filePath) => {
+      console.log("@@@ dir added", filePath)
+      if (mainWindow) mainWindow.webContents.send('dir-added', filePath);
+    })
+    .on('unlinkDir', async (filePath) => {
+      console.log("@@@ dir removed", filePath)
+      if (mainWindow) mainWindow.webContents.send('dir-removed', filePath);
+      try { await backendManager.onLocalDirRemoved(filePath, ROOT_PATH); } catch(e) { console.error('[Watcher] unlinkDir handler error:', e.message); }
+    })
+    .on('error', (error) => {
+      console.log("@@@ watcher error", error)
+      console.error(`Watcher error: ${error}`);
+      if(mainWindow) mainWindow.webContents.send('sync-error', error.message);
+    });
+
   createWindow();
   app.on('activate', function () {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -99,47 +155,7 @@ ipcMain.handle('select-folder', async () => {
   return filePaths[0];
 });
 
-// Start watching folder
-ipcMain.handle('start-sync', async (event, folderPath) => {
-  if (watcher) {
-    await watcher.close();
-  }
-
-  console.log(`Starting sync for: ${folderPath}`);
-
-  // Initialize watcher.
-  watcher = chokidar.watch(folderPath, {
-    ignored: /(^|[\/\\])\../, // ignore dotfiles
-    persistent: true,
-    ignoreInitial: false,
-    depth: 99,
-  });
-
-  // Add event listeners.
-  watcher
-    .on('add', (path) => {
-      if (mainWindow) mainWindow.webContents.send('file-added', path);
-    })
-    .on('change', (path) => {
-      if (mainWindow) mainWindow.webContents.send('file-changed', path);
-    })
-    .on('unlink', (path) => {
-      if (mainWindow) mainWindow.webContents.send('file-removed', path);
-    })
-    .on('addDir', (path) => {
-        if (mainWindow) mainWindow.webContents.send('dir-added', path);
-    })
-    .on('unlinkDir', (path) => {
-        if (mainWindow) mainWindow.webContents.send('dir-removed', path);
-    })
-    .on('error', (error) => {
-        console.error(`Watcher error: ${error}`);
-        if(mainWindow) mainWindow.webContents.send('sync-error', error.message);
-    });
-    
-  return true;
-});
-
+// start-sync IPC removed since watcher is now global
 // List content in a specific path
 ipcMain.handle('list-path-content', async (event, folderPath) => {
   try {
@@ -167,8 +183,7 @@ ipcMain.handle('create-folder', async (event, folderPath) => {
 
 });
 
-const backendManager = require('./backend/index.js');
-
+// Backend Manager moved to top
 // Download File Handler
 ipcMain.handle('download-file', async (event, { url, targetPath }) => {
     // ... existing download code ...
@@ -257,4 +272,31 @@ ipcMain.handle('select-folder-upload', async () => {
 // Upload Items (with Zip option)
 ipcMain.handle('upload-items', async (event, { items, currentPath, shouldZip }) => {
     return await backendManager.uploadItems(items, currentPath, shouldZip);
+});
+
+// Database Query Handler
+ipcMain.handle('db-query', async (event, { text, params }) => {
+  try {
+    const result = await query(text, params);
+    return { rows: result.rows, rowCount: result.rowCount };
+  } catch (error) {
+    console.error('DB Query Error:', error);
+    throw error;
+  }
+});
+
+// Init Sync Engine
+ipcMain.handle('init-sync', (event, token) => {
+    initSync(token, () => {
+        if (mainWindow) {
+            mainWindow.webContents.send('auth-expired');
+        }
+    });
+    return true;
+});
+
+// Stop Sync Engine
+ipcMain.handle('stop-sync', () => {
+    stopSync();
+    return true;
 });

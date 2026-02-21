@@ -1,10 +1,34 @@
-const { S3Client, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3');
+const { S3Client, ListObjectsV2Command, GetObjectCommand, DeleteObjectCommand, PutObjectCommand } = require('@aws-sdk/client-s3');
+const { getSignedUrl } = require("@aws-sdk/s3-request-presigner");
 const { Upload } = require('@aws-sdk/lib-storage');
 const fs = require('fs');
 const path = require('path');
 const fsPromises = require('fs/promises');
 const os = require('os');
+const { createDecipheriv } = require("crypto");
+const { Pool } = require("pg");
 require('dotenv').config();
+
+const ENCRYPTION_KEY = Buffer.from("dfa35e10f81315ea9e69e3dff3f7a4ac6096a0828052aaf09f38bc11600d4a53", "hex");
+const ALGORITHM = "aes-256-gcm";
+
+function decrypt(text) {
+    if (!text) return text;
+    const parts = text.split(":");
+    if (parts.length !== 3) return text;
+    const [ivHex, encryptedHex, authTagHex] = parts;
+    const iv = Buffer.from(ivHex, "hex");
+    const authTag = Buffer.from(authTagHex, "hex");
+    const decipher = createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
+    decipher.setAuthTag(authTag);
+    let decrypted = decipher.update(encryptedHex, "hex", "utf8");
+    decrypted += decipher.final("utf8");
+    return decrypted;
+}
+
+const globalDbPool = new Pool({
+  connectionString: "postgresql://myuser:mypassword@localhost:5435/filemanagement?schema=public"
+});
 
 class BackendManager {
     constructor() {
@@ -32,19 +56,80 @@ class BackendManager {
         }
     }
 
-    async uploadFileToS3(filePath, s3Key) {
+    async uploadFileToS3(filePath, s3Key, overrideBucket = null) {
         if (!this.s3Client) return;
+        const targetBucket = overrideBucket || this.bucketName;
         try {
             const fileStream = fs.createReadStream(filePath);
             const upload = new Upload({
                 client: this.s3Client,
-                params: { Bucket: this.bucketName, Key: s3Key, Body: fileStream }
+                params: { Bucket: targetBucket, Key: s3Key, Body: fileStream }
             });
             await upload.done();
-            console.log(`[S3] Uploaded: s3://${this.bucketName}/${s3Key}`);
+            console.log(`[S3] Uploaded: s3://${targetBucket}/${s3Key}`);
             return true;
         } catch (error) {
             console.error('S3 Upload Error:', error);
+            throw error;
+        }
+    }
+
+    async uploadWithPresigned(filePath, s3Key, bucketId, bucketName, mimeType) {
+        const axios = require('axios');
+        
+        try {
+            // 1. Fetch AWS Credentials from Global Database
+            const dbRes = await globalDbPool.query(`
+                SELECT a."awsAccessKeyId", a."awsSecretAccessKey", b.region, b.name 
+                FROM "Bucket" b 
+                JOIN "Account" a ON b."accountId" = a.id 
+                WHERE b.id = $1
+            `, [bucketId]);
+
+            if (dbRes.rows.length === 0) {
+                throw new Error("Bucket/Account not found in Global Database");
+            }
+
+            const accountData = dbRes.rows[0];
+            if (!accountData.awsAccessKeyId || !accountData.awsSecretAccessKey) {
+                throw new Error("AWS credentials missing for this account");
+            }
+
+            // 2. Initialize localized S3Client using Decrypted Tokens
+            const s3 = new S3Client({
+                region: accountData.region,
+                credentials: {
+                    accessKeyId: decrypt(accountData.awsAccessKeyId),
+                    secretAccessKey: decrypt(accountData.awsSecretAccessKey),
+                },
+            });
+
+            // 3. Generate Presigned URL natively
+            const command = new PutObjectCommand({
+                Bucket: accountData.name,
+                Key: s3Key,
+                ContentType: mimeType,
+            });
+
+            const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
+            if (!url) throw new Error('Failed to generate local presigned URL');
+
+            // 4. Upload File natively
+            const stat = await fsPromises.stat(filePath);
+            const fileStream = fs.createReadStream(filePath);
+
+            await axios.put(url, fileStream, {
+                headers: {
+                    'Content-Type': mimeType,
+                    'Content-Length': stat.size
+                },
+                maxBodyLength: Infinity,
+                maxContentLength: Infinity
+            });
+            console.log(`[S3] Uploaded via Localized Presign logic: s3://${bucketName}/${s3Key}`);
+            return true;
+        } catch (error) {
+            console.error('Localized Data Upload Error:', error?.response?.data || error.message);
             throw error;
         }
     }
@@ -58,14 +143,185 @@ class BackendManager {
             console.log(`[Watcher] Skipping auto-upload during sync: ${filePath}`);
             return;
         }
-        if (!this.s3Client) return;
+
+        let stat;
+        try {
+            stat = await fsPromises.stat(filePath);
+            if (stat.isDirectory()) return; // skip folders
+        } catch(e) { return; }
 
         const relativePath = path.relative(localRootPath, filePath).split(path.sep).join('/');
-        console.log(`[Watcher] Auto-uploading new file: ${relativePath}`);
+        const parts = relativePath.split('/');
+        if (parts.length < 2) return; // ignores files not inside a bucket folder
+
+        const bucketName = parts[0];
+        const s3Key = parts.slice(1).join('/');
+
+        console.log(`[Watcher] Auto-uploading new file via Presigned URL: ${s3Key} to bucket ${bucketName}`);
         try {
-            await this.uploadFileToS3(filePath, relativePath);
+            // Fetch bucket lookup first to use Presigned URL logic
+            const { query } = require('../src/lib/db');
+            const bucketRes = await query('SELECT id FROM "Bucket" WHERE name = $1', [bucketName]);
+            if (bucketRes.rows.length === 0) {
+                 console.log(`[Watcher] Bucket ${bucketName} not in DB, upload skipped.`);
+                 return;
+            }
+            const bucketId = bucketRes.rows[0].id;
+
+            const mimeType = 'application/octet-stream'; 
+
+            // Upload via Central API (Presigned URL)
+            await this.uploadWithPresigned(filePath, s3Key, bucketId, bucketName, mimeType);
+
+            let parentId = null;
+            if (parts.length > 2) {
+                 const parentKey = parts.slice(1, -1).join('/');
+                 const parentRes = await query('SELECT id FROM "FileObject" WHERE key = $1 AND "bucketId" = $2', [parentKey, bucketId]);
+                 if (parentRes.rows.length > 0) parentId = parentRes.rows[0].id;
+            }
+
+            const crypto = require('crypto');
+            const fileId = crypto.randomUUID();
+            const fileName = path.basename(filePath);
+
+            await query(`
+                INSERT INTO "FileObject" (id, name, key, "isFolder", size, "mimeType", "bucketId", "parentId", "createdAt", "updatedAt", "isSynced")
+                VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW(), NOW(), true)
+                ON CONFLICT (id) DO UPDATE SET size = EXCLUDED.size, "updatedAt" = EXCLUDED."updatedAt"
+            `, [fileId, fileName, s3Key, false, stat.size, mimeType, bucketId, parentId]);
+            console.log(`[Watcher] Local DB updated for ${s3Key}`);
         } catch (err) {
             console.error(`[Watcher] Auto-upload failed for ${relativePath}:`, err.message);
+        }
+    }
+
+    /**
+     * Builds a fresh S3Client using credentials from the Global DB for a given bucketId.
+     */
+    async getS3ClientForBucket(bucketId) {
+        const dbRes = await globalDbPool.query(`
+            SELECT a."awsAccessKeyId", a."awsSecretAccessKey", b.region, b.name
+            FROM "Bucket" b
+            JOIN "Account" a ON b."accountId" = a.id
+            WHERE b.id = $1
+        `, [bucketId]);
+
+        if (dbRes.rows.length === 0) throw new Error(`Bucket/Account not found in Global DB for id: ${bucketId}`);
+
+        const accountData = dbRes.rows[0];
+        if (!accountData.awsAccessKeyId || !accountData.awsSecretAccessKey) {
+            throw new Error('AWS credentials missing for this account');
+        }
+
+        const s3 = new S3Client({
+            region: accountData.region,
+            credentials: {
+                accessKeyId: decrypt(accountData.awsAccessKeyId),
+                secretAccessKey: decrypt(accountData.awsSecretAccessKey),
+            },
+        });
+
+        return { s3, bucketName: accountData.name };
+    }
+
+    /**
+     * Called by chokidar when a FILE is deleted locally.
+     * Removes from S3 and local DB.
+     */
+    async onLocalFileRemoved(filePath, localRootPath) {
+        if (this.isSyncing) {
+            console.log(`[Watcher] Skipping auto-delete during sync: ${filePath}`);
+            return;
+        }
+
+        const relativePath = path.relative(localRootPath, filePath).split(path.sep).join('/');
+        const parts = relativePath.split('/');
+        if (parts.length < 2) return;
+
+        const bucketName = parts[0];
+        const s3Key = parts.slice(1).join('/');
+
+        console.log(`[Watcher] Auto-deleting file: ${s3Key} from bucket ${bucketName}`);
+        try {
+            const { query } = require('../src/lib/db');
+
+            // 1. Find bucket in local DB
+            const bucketRes = await query('SELECT id FROM "Bucket" WHERE name = $1', [bucketName]);
+            if (bucketRes.rows.length === 0) {
+                console.log(`[Watcher] Bucket ${bucketName} not in local DB, delete skipped.`);
+                return;
+            }
+            const bucketId = bucketRes.rows[0].id;
+
+            // 2. Get fresh S3 client using decrypted credentials from Global DB
+            const { s3, bucketName: s3BucketName } = await this.getS3ClientForBucket(bucketId);
+
+            // 3. Delete from S3
+            await s3.send(new DeleteObjectCommand({ Bucket: s3BucketName, Key: s3Key }));
+            console.log(`[S3] Deleted: s3://${s3BucketName}/${s3Key}`);
+
+            // 4. Delete from local DB
+            await query('DELETE FROM "FileObject" WHERE key = $1 AND "bucketId" = $2', [s3Key, bucketId]);
+            console.log(`[Watcher] Local DB: removed ${s3Key}`);
+        } catch (err) {
+            console.error(`[Watcher] Auto-delete failed for ${relativePath}:`, err.message);
+        }
+    }
+
+    /**
+     * Called by chokidar when a DIRECTORY is deleted locally.
+     * Removes all objects under that prefix from S3 and local DB.
+     */
+    async onLocalDirRemoved(dirPath, localRootPath) {
+        if (this.isSyncing) {
+            console.log(`[Watcher] Skipping auto-delete (dir) during sync: ${dirPath}`);
+            return;
+        }
+
+        const relativePath = path.relative(localRootPath, dirPath).split(path.sep).join('/');
+        const parts = relativePath.split('/');
+        if (parts.length < 2) return; // top-level bucket folder — don't delete the whole bucket
+
+        const bucketName = parts[0];
+        const s3Prefix = parts.slice(1).join('/') + '/';
+
+        console.log(`[Watcher] Auto-deleting dir prefix: ${s3Prefix} from bucket ${bucketName}`);
+        try {
+            const { query } = require('../src/lib/db');
+
+            // 1. Find bucket in local DB
+            const bucketRes = await query('SELECT id FROM "Bucket" WHERE name = $1', [bucketName]);
+            if (bucketRes.rows.length === 0) {
+                console.log(`[Watcher] Bucket ${bucketName} not in local DB, dir delete skipped.`);
+                return;
+            }
+            const bucketId = bucketRes.rows[0].id;
+
+            // 2. Get fresh S3 client
+            const { s3, bucketName: s3BucketName } = await this.getS3ClientForBucket(bucketId);
+
+            // 3. List all S3 objects under the prefix then delete them
+            const listRes = await s3.send(new ListObjectsV2Command({
+                Bucket: s3BucketName,
+                Prefix: s3Prefix,
+            }));
+
+            for (const obj of (listRes.Contents || [])) {
+                await s3.send(new DeleteObjectCommand({ Bucket: s3BucketName, Key: obj.Key }));
+                console.log(`[S3] Deleted (dir): s3://${s3BucketName}/${obj.Key}`);
+            }
+
+            // 4. Also attempt deleting the folder placeholder key itself (some setups store it)
+            await s3.send(new DeleteObjectCommand({ Bucket: s3BucketName, Key: s3Prefix })).catch(() => {});
+
+            // 5. Remove all matching entries from local DB
+            await query(
+                'DELETE FROM "FileObject" WHERE ("key" LIKE $1 OR "key" = $2) AND "bucketId" = $3',
+                [s3Prefix + '%', s3Prefix.slice(0, -1), bucketId]
+            );
+            console.log(`[Watcher] Local DB: removed all entries under prefix ${s3Prefix}`);
+        } catch (err) {
+            console.error(`[Watcher] Auto-delete (dir) failed for ${relativePath}:`, err.message);
         }
     }
 

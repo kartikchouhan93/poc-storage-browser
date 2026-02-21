@@ -67,5 +67,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   
   selectFileForUpload: () => ipcRenderer.invoke('select-file'),
   selectFolderForUpload: () => ipcRenderer.invoke('select-folder-upload'),
-  uploadItems: (items, currentPath, shouldZip) => ipcRenderer.invoke('upload-items', { items, currentPath, shouldZip })
+  uploadItems: (items, currentPath, shouldZip) => ipcRenderer.invoke('upload-items', { items, currentPath, shouldZip }),
+  
+  // Database & Sync
+  dbQuery: (text, params) => ipcRenderer.invoke('db-query', { text, params }),
+  initSync: (token) => ipcRenderer.invoke('init-sync', token),
+  stopSync: () => ipcRenderer.invoke('stop-sync'),
+  onAuthExpired: (callback) => {
+    const subscription = (_event) => callback();
+    ipcRenderer.on('auth-expired', subscription);
+    return () => ipcRenderer.removeListener('auth-expired', subscription);
+  }
 });

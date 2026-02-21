@@ -221,6 +221,7 @@ export default function BucketsPage() {
     const region = formData.get('region') as string
     const versioning = formData.get('versioning') === 'on'
     const encryption = formData.get('encryption') === 'on'
+    const isImport = formData.get('isImport') === 'on'
 
     if (!selectedAccountId) {
       toast.error('Please select an AWS account')
@@ -235,7 +236,8 @@ export default function BucketsPage() {
           region,
           accountId: selectedAccountId,
           versioning,
-          encryption
+          encryption,
+          isImport
         }),
         headers: {
           'Content-Type': 'application/json',
@@ -244,7 +246,7 @@ export default function BucketsPage() {
       })
 
       if (res.ok) {
-        toast.success("Bucket created successfully on AWS S3")
+        toast.success(isImport ? "Bucket mapped successfully" : "Bucket created successfully on AWS S3")
         setCreateOpen(false)
         form.reset()
         setPage(1)
@@ -353,6 +355,15 @@ export default function BucketsPage() {
                         <SelectItem value="DEEP_ARCHIVE">Deep Archive</SelectItem>
                       </SelectContent>
                     </Select>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <div className="space-y-0.5">
+                      <Label>Map Existing Bucket</Label>
+                      <p className="text-xs text-muted-foreground">
+                        Connect to an already existing S3 bucket
+                      </p>
+                    </div>
+                    <Switch name="isImport" />
                   </div>
                   <div className="flex items-center justify-between">
                     <div className="space-y-0.5">
