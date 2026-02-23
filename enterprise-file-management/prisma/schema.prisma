@@ -12,8 +12,14 @@ model Tenant {
   name      String
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+  createdBy String?
+  updatedBy String?
+  createdByUser User? @relation("TenantCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("TenantUpdatedBy", fields: [updatedBy], references: [id])
   accounts  Account[]
   users     User[]
+  buckets   Bucket[]
+  objects   FileObject[]
 }
 
 model Account {
@@ -25,6 +31,10 @@ model Account {
   isActive           Boolean  @default(true)
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
+  createdBy          String?
+  updatedBy          String?
+  createdByUser      User?    @relation("AccountCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser      User?    @relation("AccountUpdatedBy", fields: [updatedBy], references: [id])
   tenant             Tenant   @relation(fields: [tenantId], references: [id])
   buckets            Bucket[]
 }
@@ -36,7 +46,13 @@ model Bucket {
   accountId String
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+  createdBy String?
+  updatedBy String?
+  createdByUser User?    @relation("BucketCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?    @relation("BucketUpdatedBy", fields: [updatedBy], references: [id])
   account   Account      @relation(fields: [accountId], references: [id])
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
   objects   FileObject[]
   versioning Boolean     @default(false)
   encryption Boolean     @default(false)
@@ -55,12 +71,19 @@ model FileObject {
   parentId  String?
   createdAt DateTime     @default(now())
   updatedAt DateTime     @updatedAt
+  createdBy String?
+  updatedBy String?
+  createdByUser User?    @relation("FileObjectCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?    @relation("FileObjectUpdatedBy", fields: [updatedBy], references: [id])
   bucket    Bucket       @relation(fields: [bucketId], references: [id])
+  tenantId  String
+  tenant    Tenant       @relation(fields: [tenantId], references: [id])
   parent    FileObject?  @relation("ParentChild", fields: [parentId], references: [id])
   children  FileObject[] @relation("ParentChild")
 
   @@index([bucketId, key])
   @@index([bucketId, name])
+  @@index([tenantId])
 }
 
 model User {
@@ -72,8 +95,28 @@ model User {
   tenantId  String?
   createdAt DateTime         @default(now())
   updatedAt DateTime         @updatedAt
+  createdBy String?
+  updatedBy String?
   auditLogs AuditLog[]
   policies  ResourcePolicy[]
+  // Auditing relations for other models
+  tenantsCreated Tenant[] @relation("TenantCreatedBy")
+  tenantsUpdated Tenant[] @relation("TenantUpdatedBy")
+  accountsCreated Account[] @relation("AccountCreatedBy")
+  accountsUpdated Account[] @relation("AccountUpdatedBy")
+  bucketsCreated Bucket[] @relation("BucketCreatedBy")
+  bucketsUpdated Bucket[] @relation("BucketUpdatedBy")
+  filesCreated FileObject[] @relation("FileObjectCreatedBy")
+  filesUpdated FileObject[] @relation("FileObjectUpdatedBy")
+  usersCreated User[] @relation("UserCreatedBy")
+  usersUpdated User[] @relation("UserUpdatedBy")
+  policiesCreated ResourcePolicy[] @relation("PolicyCreatedBy")
+  policiesUpdated ResourcePolicy[] @relation("PolicyUpdatedBy")
+  auditLogsCreated AuditLog[] @relation("AuditLogCreatedBy")
+  auditLogsUpdated AuditLog[] @relation("AuditLogUpdatedBy")
+  
+  createdByUser User? @relation("UserCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("UserUpdatedBy", fields: [updatedBy], references: [id])
   tenant    Tenant?          @relation(fields: [tenantId], references: [id])
 }
 
@@ -85,6 +128,10 @@ model ResourcePolicy {
   actions      String[]
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
+  createdBy    String?
+  updatedBy    String?
+  createdByUser User?   @relation("PolicyCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User?   @relation("PolicyUpdatedBy", fields: [updatedBy], references: [id])
   user         User     @relation(fields: [userId], references: [id])
 }
 
@@ -96,6 +143,11 @@ model AuditLog {
   details   String?
   status    String
   createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  createdBy String?
+  updatedBy String?
+  createdByUser User? @relation("AuditLogCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser User? @relation("AuditLogUpdatedBy", fields: [updatedBy], references: [id])
   user      User     @relation(fields: [userId], references: [id])
 }
 
