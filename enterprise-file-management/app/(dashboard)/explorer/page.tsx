@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Image,
   Music,
+  RefreshCw,
   Search,
   Sheet,
   Video,
@@ -33,15 +34,28 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
-import {
-  flattenFiles,
-  mockFiles,
-  formatBytes,
-  formatDate,
-  type FileItem,
-  type FileType,
-} from "@/lib/mock-data"
+import { formatBytes, formatDate } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
+import { useAuth } from "@/components/providers/AuthProvider"
+import { fetchWithAuth } from "@/lib/api"
+import { FileViewer } from "@/components/file-viewer"
+
+// Extended type based on API response
+export type FileType = "folder" | "pdf" | "image" | "document" | "spreadsheet" | "archive" | "video" | "audio" | "code" | "other"
+
+export interface ApiFileItem {
+  id: string
+  name: string
+  key: string
+  type: FileType
+  size: number
+  modifiedAt: string
+  owner: string
+  ownerId: string
+  bucketName: string
+  bucketId: string
+  tenantId: string
+}
 
 const fileIcons: Record<FileType, React.ElementType> = {
   folder: FolderOpen,
@@ -57,22 +71,101 @@ const fileIcons: Record<FileType, React.ElementType> = {
 }
 
 const fileTypeFilters: FileType[] = [
-  "pdf",
-  "image",
   "document",
   "spreadsheet",
+  "pdf",
+  "image",
   "archive",
   "video",
   "code",
 ]
 
-const allFiles = flattenFiles(mockFiles).filter((f) => f.type !== "folder")
-
-export default function SearchPage() {
+export default function ExplorerPage() {
+  const { user } = useAuth()
   const [query, setQuery] = React.useState("")
-  const [activeFilters, setActiveFilters] = React.useState<Set<FileType>>(
-    new Set()
-  )
+  const [activeFilters, setActiveFilters] = React.useState<Set<FileType>>(new Set())
+  const [files, setFiles] = React.useState<ApiFileItem[]>([])
+  const [loading, setLoading] = React.useState(true)
+  const [loadingMore, setLoadingMore] = React.useState(false)
+  const [page, setPage] = React.useState(1)
+  const [hasMore, setHasMore] = React.useState(true)
+  const observerTarget = React.useRef(null)
+  const [debounceTimeout, setDebounceTimeout] = React.useState<NodeJS.Timeout | null>(null)
+  
+  const [selectedFile, setSelectedFile] = React.useState<ApiFileItem | null>(null)
+  const [viewerOpen, setViewerOpen] = React.useState(false)
+
+  const fetchFiles = React.useCallback(async (pageNum: number, searchQuery: string, filters: Set<FileType>, isNewFilter: boolean = false) => {
+    try {
+      if (pageNum === 1) setLoading(true)
+      else setLoadingMore(true)
+      
+      const token = localStorage.getItem('accessToken');
+      if (!token) return;
+
+      const url = new URL('/api/explorer', window.location.origin)
+      if (searchQuery.trim()) url.searchParams.append('q', searchQuery.trim())
+      
+      if (filters.size > 0) {
+        url.searchParams.append('types', Array.from(filters).join(','))
+      }
+
+      url.searchParams.append('page', pageNum.toString())
+      url.searchParams.append('limit', '20')
+      
+      const res = await fetchWithAuth(url.toString())
+      if (res.ok) {
+        const result = await res.json()
+        const { data, metadata } = result
+        
+        if (isNewFilter || pageNum === 1) {
+          setFiles(data)
+        } else {
+          setFiles(prev => [...prev, ...data])
+        }
+        
+        setHasMore(metadata.page < metadata.totalPages)
+        setPage(metadata.page)
+      }
+    } catch (err) {
+      console.error('Failed to fetch explorer files:', err)
+    } finally {
+      if (pageNum === 1) setLoading(false)
+      setLoadingMore(false)
+    }
+  }, [])
+
+  React.useEffect(() => {
+    if (debounceTimeout) clearTimeout(debounceTimeout)
+    const timeout = setTimeout(() => {
+      setPage(1)
+      fetchFiles(1, query, activeFilters, true)
+    }, 300)
+    setDebounceTimeout(timeout)
+    return () => clearTimeout(timeout)
+  }, [query, activeFilters, fetchFiles])
+
+  React.useEffect(() => {
+    const observer = new IntersectionObserver(
+      entries => {
+        if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
+          const nextPage = page + 1
+          fetchFiles(nextPage, query, activeFilters)
+        }
+      },
+      { threshold: 1.0 }
+    )
+
+    if (observerTarget.current) {
+      observer.observe(observerTarget.current)
+    }
+
+    return () => {
+      if (observerTarget.current) {
+        observer.unobserve(observerTarget.current)
+      }
+    }
+  }, [hasMore, loading, loadingMore, page, query, activeFilters, fetchFiles])
 
   const toggleFilter = (type: FileType) => {
     setActiveFilters((prev) => {
@@ -83,23 +176,6 @@ export default function SearchPage() {
     })
   }
 
-  const filteredFiles = React.useMemo(() => {
-    let results = allFiles
-    if (query.trim()) {
-      const q = query.toLowerCase()
-      results = results.filter(
-        (f) =>
-          f.name.toLowerCase().includes(q) ||
-          f.path.toLowerCase().includes(q) ||
-          f.owner.toLowerCase().includes(q)
-      )
-    }
-    if (activeFilters.size > 0) {
-      results = results.filter((f) => activeFilters.has(f.type))
-    }
-    return results
-  }, [query, activeFilters])
-
   return (
     <>
       <SearchCommandDialog />
@@ -109,7 +185,7 @@ export default function SearchPage() {
         <Breadcrumb>
           <BreadcrumbList>
             <BreadcrumbItem>
-              <BreadcrumbPage>Search</BreadcrumbPage>
+              <BreadcrumbPage>File Explorer</BreadcrumbPage>
             </BreadcrumbItem>
           </BreadcrumbList>
         </Breadcrumb>
@@ -175,18 +251,18 @@ export default function SearchPage() {
           {/* Results */}
           <div className="space-y-2">
             <p className="text-sm text-muted-foreground">
-              {filteredFiles.length} result{filteredFiles.length !== 1 ? "s" : ""}
-              {query && ` for "${query}"`}
+              {loading && page === 1 ? 'Searching...' : `${files.length} result${files.length !== 1 ? "s" : ""}`}
+              {query && !loading && ` for "${query}"`}
             </p>
 
-            {filteredFiles.length > 0 ? (
+            {files.length > 0 ? (
               <div className="rounded-lg border overflow-hidden">
                 <Table>
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
                       <TableHead>Name</TableHead>
                       <TableHead className="hidden md:table-cell">
-                        Path
+                        Bucket
                       </TableHead>
                       <TableHead className="hidden sm:table-cell">
                         Size
@@ -195,15 +271,22 @@ export default function SearchPage() {
                         Modified
                       </TableHead>
                       <TableHead className="hidden lg:table-cell">
-                        Owner
+                        By
                       </TableHead>
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredFiles.map((file) => {
-                      const Icon = fileIcons[file.type]
+                    {files.map((file) => {
+                      const Icon = fileIcons[file.type] || fileIcons.other
                       return (
-                        <TableRow key={file.id}>
+                        <TableRow 
+                          key={file.id} 
+                          className="cursor-pointer hover:bg-muted/50"
+                          onClick={() => {
+                            setSelectedFile(file)
+                            setViewerOpen(true)
+                          }}
+                        >
                           <TableCell>
                             <div className="flex items-center gap-2.5">
                               <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
@@ -212,8 +295,8 @@ export default function SearchPage() {
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground font-mono text-xs">
-                            {file.path}
+                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                            {file.bucketName}
                           </TableCell>
                           <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
                             {formatBytes(file.size)}
@@ -239,9 +322,23 @@ export default function SearchPage() {
                 </p>
               </div>
             )}
+
+            <div ref={observerTarget} className="h-4 w-full" />
+            
+            {loadingMore && (
+              <div className="text-center py-4">
+                <RefreshCw className="h-6 w-6 animate-spin mx-auto text-primary" />
+              </div>
+            )}
           </div>
         </div>
       </div>
+
+      <FileViewer 
+        file={selectedFile} 
+        open={viewerOpen} 
+        onOpenChange={setViewerOpen} 
+      />
     </>
   )
 }

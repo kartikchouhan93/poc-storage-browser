@@ -47,7 +47,7 @@ import { useAuth } from "@/components/providers/AuthProvider"
 const mainNav = [
   { title: "Overview", icon: LayoutDashboard, href: "/" },
   { title: "Buckets", icon: HardDrive, href: "/buckets" },
-  // { title: "Search", icon: Search, href: "/search" },
+  { title: "File Explorer", icon: FolderOpen, href: "/explorer" },
 ]
 
 const tenantNav = [

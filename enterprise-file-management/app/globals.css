@@ -123,3 +123,8 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Override react-doc-viewer header that ignores disableHeader */
+#react-doc-viewer #header-bar {
+  display: none !important;
+}
