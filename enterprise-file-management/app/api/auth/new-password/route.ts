@@ -1,35 +1,26 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
-import { authenticateCognitoUser } from '@/lib/auth-service';
+import { respondToNewPasswordChallenge } from '@/lib/auth-service';
 
 export async function POST(request: NextRequest) {
     try {
-        const { email, password } = await request.json();
+        const { email, newPassword, session } = await request.json();
 
-        if (!email || !password) {
-            return NextResponse.json({ error: 'Missing email or password' }, { status: 400 });
+        if (!email || !newPassword || !session) {
+            return NextResponse.json({ error: 'Missing required parameters' }, { status: 400 });
         }
 
-        let authResult;
-        let initiateAuthResponse;
+        let authResponse;
         try {
-            initiateAuthResponse = await authenticateCognitoUser(email, password);
+            authResponse = await respondToNewPasswordChallenge(email, newPassword, session);
         } catch (error: any) {
-            return NextResponse.json({ error: error.message || 'Invalid credentials' }, { status: 401 });
+            return NextResponse.json({ error: error.message || 'Failed to update password' }, { status: 400 });
         }
 
-        if (initiateAuthResponse.ChallengeName === 'NEW_PASSWORD_REQUIRED') {
-            return NextResponse.json({
-                challengeName: 'NEW_PASSWORD_REQUIRED',
-                session: initiateAuthResponse.Session,
-                message: 'A new password is required'
-            }, { status: 200 }); // Return 200 so frontend can handle challenge
-        }
-
-        authResult = initiateAuthResponse.AuthenticationResult;
+        const authResult = authResponse.AuthenticationResult;
 
         if (!authResult || !authResult.IdToken) {
-            return NextResponse.json({ error: 'Invalid response from Cognito' }, { status: 500 });
+            return NextResponse.json({ error: 'Invalid response from Cognito after password update' }, { status: 500 });
         }
 
         const defaultRole = email.toLowerCase() === 'admin@fms.com' ? 'PLATFORM_ADMIN' : 'TEAMMATE';
@@ -49,7 +40,7 @@ export async function POST(request: NextRequest) {
         }
 
         const responseBody = {
-            message: "Login successful",
+            message: "Password updated and login successful",
             role: user?.role || defaultRole,
             tenantId: user?.tenantId || '',
             name: user?.name || '',
@@ -83,7 +74,7 @@ export async function POST(request: NextRequest) {
         return response;
 
     } catch (error) {
-        console.error("Login Error:", error);
+        console.error("New Password Error:", error);
         return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
     }
 }

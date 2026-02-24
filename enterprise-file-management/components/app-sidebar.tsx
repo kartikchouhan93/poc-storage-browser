@@ -1,4 +1,4 @@
-"use client"
+"use client";
 
 import {
   AudioWaveform,
@@ -16,10 +16,10 @@ import {
   Shield,
   User,
   Users,
-} from "lucide-react"
-import Link from "next/link"
-import { usePathname } from "next/navigation"
-import { Avatar, AvatarFallback } from "@/components/ui/avatar"
+} from "lucide-react";
+import Link from "next/link";
+import { usePathname } from "next/navigation";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,7 +27,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuSeparator,
   DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu"
+} from "@/components/ui/dropdown-menu";
 import {
   Sidebar,
   SidebarContent,
@@ -40,39 +40,45 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarRail,
-} from "@/components/ui/sidebar"
-import { ThemeToggle } from "@/components/theme-toggle"
-import { useAuth } from "@/components/providers/AuthProvider"
+} from "@/components/ui/sidebar";
+import { ThemeToggle } from "@/components/theme-toggle";
+import { useAuth } from "@/components/providers/AuthProvider";
 
 const mainNav = [
   { title: "Overview", icon: LayoutDashboard, href: "/" },
   { title: "Buckets", icon: HardDrive, href: "/buckets" },
   // { title: "Search", icon: Search, href: "/search" },
-]
+];
+
+const platformAdminNav = [
+  { title: "Overview", icon: LayoutDashboard, href: "/" },
+  { title: "Tenants", icon: Building, href: "/tenants" },
+  { title: "Manage Users", icon: Users, href: "/users" },
+  { title: "Buckets", icon: HardDrive, href: "/buckets" },
+];
 
 const tenantNav = [
-  ...mainNav,
-  { title: "AWS Accounts", icon: Cloud, href: "/accounts" },
-  { title: "Teammates", icon: Users, href: "/teammates" },
-]
+  { title: "Buckets", icon: HardDrive, href: "/buckets" },
+  { title: "Users", icon: Users, href: "/teammates" },
+];
 
 const managementNav = [
   { title: "Audit & Costs", icon: CreditCard, href: "/audit" },
   { title: "Settings", icon: Settings, href: "/settings" },
-]
+];
 
 export function AppSidebar() {
-  const pathname = usePathname()
-  const { user, logout } = useAuth()
+  const pathname = usePathname();
+  const { user, logout } = useAuth();
 
   let navItems = mainNav;
-  if (user?.role === 'PLATFORM_ADMIN') {
-    navItems = [...mainNav, { title: "Tenants", icon: Building, href: "/tenants" }]
-  } else if (user?.role === 'TENANT_ADMIN') {
-    navItems = tenantNav
+  if (user?.role === "PLATFORM_ADMIN") {
+    navItems = platformAdminNav;
+  } else if (user?.role === "TENANT_ADMIN" || user?.role === "TEAMMATE") {
+    navItems = tenantNav;
   }
 
-  if (!user) return null
+  if (!user) return null;
 
   return (
     <Sidebar variant="inset">
@@ -88,7 +94,7 @@ export function AppSidebar() {
                   <div className="flex flex-col gap-0.5 leading-none">
                     <span className="font-semibold">CloudVault</span>
                     <span className="text-xs text-muted-foreground">
-                      {user.tenantName || 'Enterprise'}
+                      {user.tenantName || "Enterprise"}
                     </span>
                   </div>
                   <ChevronDown className="ml-auto h-4 w-4 text-muted-foreground" />
@@ -102,7 +108,7 @@ export function AppSidebar() {
                 <DropdownMenuSeparator />
                 <DropdownMenuItem>
                   <Cloud className="mr-2 h-4 w-4" />
-                  {user.tenantName || 'Enterprise'}
+                  {user.tenantName || "Enterprise"}
                 </DropdownMenuItem>
               </DropdownMenuContent>
             </DropdownMenu>
@@ -184,7 +190,7 @@ export function AppSidebar() {
                 <SidebarMenuButton size="lg" className="w-full">
                   <Avatar className="h-7 w-7">
                     <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                      {user.name?.substring(0, 2).toUpperCase() || 'U'}
+                      {user.name?.substring(0, 2).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col gap-0.5 leading-none">
@@ -195,15 +201,11 @@ export function AppSidebar() {
                   </div>
                 </SidebarMenuButton>
               </DropdownMenuTrigger>
-              <DropdownMenuContent
-                className="w-56"
-                align="start"
-                side="top"
-              >
+              <DropdownMenuContent className="w-56" align="start" side="top">
                 <DropdownMenuLabel className="flex items-center gap-2">
                   <Avatar className="h-8 w-8">
                     <AvatarFallback className="bg-primary/10 text-primary text-xs">
-                      {user.name?.substring(0, 2).toUpperCase() || 'U'}
+                      {user.name?.substring(0, 2).toUpperCase() || "U"}
                     </AvatarFallback>
                   </Avatar>
                   <div className="flex flex-col">
@@ -244,5 +246,5 @@ export function AppSidebar() {
 
       <SidebarRail />
     </Sidebar>
-  )
+  );
 }

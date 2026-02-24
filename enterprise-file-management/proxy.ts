@@ -4,9 +4,9 @@ import type { NextRequest } from 'next/server';
 import { verifyToken } from '@/lib/token';
 
 // Paths that don't require authentication
-const publicPaths = ['/login', '/api/auth/login', '/api/auth/refresh', '/api/auth/logout', '/api/auth/register', '/api/seed'];
+const publicPaths = ['/login', '/api/auth/login', '/api/auth/me', '/api/auth/new-password', '/api/auth/refresh', '/api/auth/logout', '/api/auth/register', '/api/seed'];
 
-export async function middleware(request: NextRequest) {
+export async function proxy(request: NextRequest) {
     const { pathname } = request.nextUrl;
 
     // Check for Access Token in Headers (Authorization: Bearer <token>)

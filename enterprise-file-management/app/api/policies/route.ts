@@ -105,7 +105,7 @@ export async function DELETE(request: NextRequest) {
     if (requester?.role === Role.PLATFORM_ADMIN) {
         // Allow
     } else if (requester?.role === Role.TENANT_ADMIN) {
-        if (requester.tenantId !== policy.user.tenantId) {
+        if (policy.user && requester.tenantId !== policy.user.tenantId) {
             return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
         }
     } else {
