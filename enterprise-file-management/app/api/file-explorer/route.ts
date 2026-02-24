@@ -25,39 +25,56 @@ export async function GET(request: NextRequest) {
     const searchParams = request.nextUrl.searchParams;
     const bucketId = searchParams.get('bucketId');
     const parentId = searchParams.get('parentId');
-
-    if (!bucketId) {
-      // Return allowed buckets (Reuse logic from buckets API or simplified)
-      // For brevity, let's just return error asking for bucketId, 
-      // as the UI should start from a bucket list or specific bucket.
-      // Or we can return the same list as /api/buckets
-      return NextResponse.json({ error: 'Bucket ID required' }, { status: 400 });
-    }
-
-    // Verify Bucket Access
-    const bucket = await prisma.bucket.findUnique({
-      where: { id: bucketId },
-      include: { account: true }
-    });
-
-    if (!bucket) return NextResponse.json({ error: 'Bucket not found' }, { status: 404 });
-
-    // Check Permission
-    const hasAccess = await checkPermission(user, 'READ', {
-      tenantId: bucket.account.tenantId,
-      resourceType: 'bucket',
-      resourceId: bucket.id
-    });
-
-    if (!hasAccess) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
-    }
-
     const search = searchParams.get('search');
+
+    let allowedBucketIds: string[] = [];
+
+    if (bucketId) {
+      // Verify Specific Bucket Access
+      const bucket = await prisma.bucket.findUnique({
+        where: { id: bucketId },
+        include: { account: true }
+      });
+
+      if (!bucket) return NextResponse.json({ error: 'Bucket not found' }, { status: 404 });
+
+      // Check Permission
+      const hasAccess = await checkPermission(user, 'READ', {
+        tenantId: bucket.account.tenantId,
+        resourceType: 'bucket',
+        resourceId: bucket.id
+      });
+
+      if (!hasAccess) {
+        return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+      }
+      allowedBucketIds.push(bucket.id);
+    } else {
+      // Fetch all buckets in tenant
+      const userTenantBuckets = await prisma.bucket.findMany({
+        where: { account: { tenantId: user.tenantId! } },
+        include: { account: true }
+      });
+      // Filter by READ permission
+      for (const b of userTenantBuckets) {
+        const hasAccess = await checkPermission(user, 'READ', {
+          tenantId: b.account.tenantId,
+          resourceType: 'bucket',
+          resourceId: b.id
+        });
+        if (hasAccess) {
+          allowedBucketIds.push(b.id);
+        }
+      }
+    }
+
+    if (allowedBucketIds.length === 0) {
+      return NextResponse.json({ files: [] }); // No access to any buckets
+    }
 
     // List Objects
     const whereClause: any = {
-      bucketId: bucketId,
+      bucketId: { in: allowedBucketIds },
     };
 
     if (search && search.trim() !== '') {
@@ -104,7 +121,7 @@ export async function GET(request: NextRequest) {
       if (ancestorKeys.size > 0) {
         const ancestors = await prisma.fileObject.findMany({
           where: {
-            bucketId: bucketId,
+            bucketId: bucketId ? bucketId : { in: allowedBucketIds },
             key: { in: Array.from(ancestorKeys) },
             isFolder: true
           },
@@ -138,6 +155,7 @@ export async function GET(request: NextRequest) {
         modifiedAt: f.updatedAt.toISOString(),
         owner: 'Admin', // Placeholder as per logic
         bucket: 'prod-assets', // Placeholder
+        bucketId: f.bucketId,
         path: f.key,
         breadcrumbs,
         children: f.children.map(c => ({ id: c.id })),

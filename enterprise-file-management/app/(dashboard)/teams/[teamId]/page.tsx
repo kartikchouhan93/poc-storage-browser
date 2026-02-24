@@ -22,6 +22,7 @@ export default function TeamDetailPage() {
   
   // Members State
   const [selectedUserId, setSelectedUserId] = React.useState('');
+  const [searchQuery, setSearchQuery] = React.useState('');
   const [isAddMemberOpen, setIsAddMemberOpen] = React.useState(false);
   const [loadingMember, setLoadingMember] = React.useState(false);
 
@@ -56,13 +57,16 @@ export default function TeamDetailPage() {
       .catch(console.error);
 
     // Fetch tenant buckets for matrix rows
-    fetch('/api/tenant/buckets')
+    fetch('/api/buckets')
       .then(res => res.json())
-      .then(data => Array.isArray(data) ? setBuckets(data) : setBuckets([]))
+      .then((resData: any) => {
+         const bucketList = resData?.data || resData; // Support both {data: [...]} and flat array just in case
+         Array.isArray(bucketList) ? setBuckets(bucketList) : setBuckets([]);
+      })
       .catch(console.error);
 
     // Fetch tenant users for member dropdown
-    fetch('/api/tenant/users')
+    fetch('/api/users')
       .then(res => res.json())
       .then(data => Array.isArray(data) ? setTenantUsers(data) : setTenantUsers([]))
       .catch(console.error);
@@ -158,6 +162,8 @@ export default function TeamDetailPage() {
     { header: 'Role', accessorKey: 'user.role' },
     { header: 'Added On', accessorKey: 'createdAt', cell: (r: any) => new Date(r.createdAt).toLocaleDateString() },
     {
+       header: '',
+       accessorKey: 'actions',
        id: 'actions',
        cell: (row: any) => (
            <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 block" onClick={() => handleRemoveMember(row.userId)}>
@@ -171,16 +177,16 @@ export default function TeamDetailPage() {
   const availableUsers = tenantUsers.filter(tu => !team.members.find((m: any) => m.userId === tu.id));
 
   return (
-    <div className="space-y-6 px-4 md:px-6 lg:px-8 py-6 max-w-7xl mx-auto">
+    <div className="space-y-6 px-4 md:px-6 lg:px-8 py-6">
       <div>
          <Button variant="link" className="px-0 text-muted-foreground mb-2" onClick={() => router.push('/teams')}>
            ← Back to Teams
          </Button>
-         <h1 className="text-3xl font-bold tracking-tight">{team.name}</h1>
+         <h1 className="text-3xl font-bold tracking-tight">Team: {team.name}</h1>
          <p className="text-muted-foreground mt-1">Manage team members and configure granular bucket access.</p>
       </div>
 
-      <Tabs defaultValue="permissions" className="w-full mt-6">
+      <Tabs defaultValue="members" className="w-full mt-6">
         <TabsList className="mb-4">
           <TabsTrigger value="members" className="gap-2">
              <Users className="h-4 w-4" /> Members
@@ -205,20 +211,50 @@ export default function TeamDetailPage() {
                   }
                >
                    <div className="space-y-4">
-                       <label className="text-sm font-medium">Select Tenant User</label>
+                       <Input 
+                           placeholder="Search user by name or email..." 
+                           value={searchQuery} 
+                           onChange={e => setSearchQuery(e.target.value)}
+                           className="w-full"
+                       />
                        {availableUsers.length === 0 ? (
                            <p className="text-sm text-muted-foreground">All tenant users are already in this team.</p>
                        ) : (
-                           <Select onValueChange={setSelectedUserId} value={selectedUserId}>
-                              <SelectTrigger>
-                                 <SelectValue placeholder="Select a user" />
-                              </SelectTrigger>
-                              <SelectContent>
-                                  {availableUsers.map(u => (
-                                      <SelectItem key={u.id} value={u.id}>{u.email} ({u.role})</SelectItem>
-                                  ))}
-                              </SelectContent>
-                           </Select>
+                           <div className="border rounded-md bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 max-h-60 overflow-y-auto">
+                              <table className="w-full text-sm text-left border-collapse">
+                                 <thead className="bg-slate-100 dark:bg-slate-800/50 text-xs text-muted-foreground uppercase sticky top-0 z-10 shadow-sm">
+                                    <tr>
+                                       <th className="px-4 py-3 font-medium text-left">User</th>
+                                       <th className="px-4 py-3 font-medium text-left whitespace-nowrap">Teams part of</th>
+                                       <th className="px-4 py-3 font-medium text-right w-[100px]">Action</th>
+                                    </tr>
+                                 </thead>
+                                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950">
+                                    {availableUsers.filter(u => u.email.toLowerCase().includes(searchQuery.toLowerCase()) || (u.name || '').toLowerCase().includes(searchQuery.toLowerCase())).map(u => (
+                                        <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
+                                           <td className="px-4 py-3">
+                                              <div className="flex flex-col gap-0.5">
+                                                 <span className="font-medium text-slate-900 dark:text-slate-100">{u.name || '—'}</span>
+                                                 <span className="text-xs text-muted-foreground">{u.email}</span>
+                                              </div>
+                                           </td>
+                                           <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
+                                              {u.teams?.map((t: any) => t.team?.name).join(', ') || 'None'}
+                                           </td>
+                                           <td className="px-4 py-3 text-right">
+                                              <Button 
+                                                 size="sm" 
+                                                 variant={selectedUserId === u.id ? "default" : "outline"}
+                                                 onClick={() => setSelectedUserId(u.id)}
+                                              >
+                                                 {selectedUserId === u.id ? "Selected" : "Select"}
+                                              </Button>
+                                           </td>
+                                        </tr>
+                                    ))}
+                                 </tbody>
+                              </table>
+                           </div>
                        )}
                    </div>
                </GenericModal>

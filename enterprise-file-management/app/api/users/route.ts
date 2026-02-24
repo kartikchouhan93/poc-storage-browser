@@ -33,7 +33,16 @@ export async function GET(request: NextRequest) {
             name: true,
             role: true,
             tenantId: true,
-            createdAt: true
+            createdAt: true,
+            teams: {
+                select: {
+                    team: {
+                        select: {
+                            name: true
+                        }
+                    }
+                }
+            }
         }
     });
 

@@ -2,12 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/session';
 
-export async function POST(request: NextRequest, { params }: { params: { teamId: string } }) {
+export async function POST(
+    request: NextRequest,
+    { params }: { params: Promise<{ teamId: string }> }
+) {
     try {
         const user = await getCurrentUser();
         if (!user || user.role !== 'TENANT_ADMIN' || !user.tenantId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
+
+        const { teamId } = await params;
 
         const { userId } = await request.json();
         if (!userId) {
@@ -23,10 +28,20 @@ export async function POST(request: NextRequest, { params }: { params: { teamId:
             return NextResponse.json({ error: 'User not found or not in your tenant' }, { status: 404 });
         }
 
+        // Verify the team belongs to the tenant
+        const team = await prisma.team.findFirst({
+            where: { id: teamId, tenantId: user.tenantId }
+        });
+
+        if (!team) {
+            return NextResponse.json({ error: 'Team not found' }, { status: 404 });
+        }
+
+        // Use createMany or Unchecked approach to avoid "user argument missing" Prisma error
         const membership = await prisma.teamMembership.create({
             data: {
-                teamId: params.teamId,
-                userId: userId
+                teamId,
+                userId,
             },
             include: {
                 user: {

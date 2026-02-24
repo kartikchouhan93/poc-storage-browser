@@ -170,7 +170,14 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
   }, [bucketId, currentParentId, searchQuery])
 
   // Permission Check
-  const canUpload = can('WRITE', { resourceType: 'bucket' }); // Check global or contextual write permission
+  // We can check permissions on a per-file basis using the file's bucketId
+  const canPerform = React.useCallback((action: 'READ' | 'WRITE' | 'DELETE' | 'LIST', fileBucketId?: string) => {
+     const resourceId = fileBucketId || bucketId || undefined;
+     return can(action, { resourceType: 'bucket', resourceId });
+  }, [can, bucketId]);
+
+  // If no bucketId is selected (all files view), uploading directly to root is disabled.
+  const canUpload = !!bucketId && canPerform('WRITE');
 
   React.useEffect(() => {
     fetchFiles()
@@ -666,12 +673,12 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
         </div>
       )}
 
-      {!loading && !bucketId && (
+      {!loading && !bucketId && currentFiles.length === 0 && (
         <div className="flex flex-col items-center justify-center py-16 text-center">
           <HardDrive className="h-12 w-12 text-muted-foreground mb-4" />
-          <p className="text-lg font-medium">No bucket selected</p>
+          <p className="text-lg font-medium">No Files Found</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Please select a bucket from the Buckets page to view files.
+            Get started by creating a bucket and uploading some files.
           </p>
           <Link href="/buckets">
             <Button className="mt-4 gap-1.5">

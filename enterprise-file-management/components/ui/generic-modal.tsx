@@ -34,7 +34,11 @@ export function GenericModal({
       <DialogContent className="sm:max-w-[425px]">
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
-          {description && <DialogDescription>{description}</DialogDescription>}
+          {description ? (
+            <DialogDescription>{description}</DialogDescription>
+          ) : (
+            <DialogDescription className="sr-only">Modal dialog</DialogDescription>
+          )}
         </DialogHeader>
         <div className="grid gap-4 py-4">
           {children}

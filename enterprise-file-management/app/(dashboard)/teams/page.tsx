@@ -136,6 +136,15 @@ export default function TeamsPage() {
       accessorKey: "createdAt",
       cell: (row: any) => new Date(row.createdAt).toLocaleDateString(),
     },
+    {
+      header: "Teams part of",
+      accessorKey: "teams",
+      cell: (row: any) => {
+          const t = row.teams?.map((m: any) => m.team?.name).filter(Boolean);
+          if (!t || t.length === 0) return "—";
+          return t.join(", ");
+      }
+    }
   ];
 
   return (
