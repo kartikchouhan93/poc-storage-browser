@@ -34,6 +34,13 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
 import { formatBytes, formatDate } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
 import { useAuth } from "@/components/providers/AuthProvider"
@@ -92,10 +99,28 @@ export default function ExplorerPage() {
   const observerTarget = React.useRef(null)
   const [debounceTimeout, setDebounceTimeout] = React.useState<NodeJS.Timeout | null>(null)
   
+  const [teammates, setTeammates] = React.useState<{id: string, name: string, email: string}[]>([])
+  const [filterCreator, setFilterCreator] = React.useState<string>("ALL")
+  
   const [selectedFile, setSelectedFile] = React.useState<ApiFileItem | null>(null)
   const [viewerOpen, setViewerOpen] = React.useState(false)
 
-  const fetchFiles = React.useCallback(async (pageNum: number, searchQuery: string, filters: Set<FileType>, isNewFilter: boolean = false) => {
+  React.useEffect(() => {
+    const fetchTeammates = async () => {
+      try {
+        const res = await fetchWithAuth('/api/teammates')
+        if (res.ok) {
+          const data = await res.json()
+          setTeammates(data)
+        }
+      } catch (err) {
+        console.error('Failed to fetch teammates', err)
+      }
+    }
+    fetchTeammates()
+  }, [])
+
+  const fetchFiles = React.useCallback(async (pageNum: number, searchQuery: string, filters: Set<FileType>, creatorId: string, isNewFilter: boolean = false) => {
     try {
       if (pageNum === 1) setLoading(true)
       else setLoadingMore(true)
@@ -106,6 +131,8 @@ export default function ExplorerPage() {
       const url = new URL('/api/explorer', window.location.origin)
       if (searchQuery.trim()) url.searchParams.append('q', searchQuery.trim())
       
+      if (creatorId !== "ALL") url.searchParams.append('createdBy', creatorId)
+
       if (filters.size > 0) {
         url.searchParams.append('types', Array.from(filters).join(','))
       }
@@ -139,18 +166,18 @@ export default function ExplorerPage() {
     if (debounceTimeout) clearTimeout(debounceTimeout)
     const timeout = setTimeout(() => {
       setPage(1)
-      fetchFiles(1, query, activeFilters, true)
+      fetchFiles(1, query, activeFilters, filterCreator, true)
     }, 300)
     setDebounceTimeout(timeout)
     return () => clearTimeout(timeout)
-  }, [query, activeFilters, fetchFiles])
+  }, [query, activeFilters, filterCreator, fetchFiles])
 
   React.useEffect(() => {
     const observer = new IntersectionObserver(
       entries => {
         if (entries[0].isIntersecting && hasMore && !loading && !loadingMore) {
           const nextPage = page + 1
-          fetchFiles(nextPage, query, activeFilters)
+          fetchFiles(nextPage, query, activeFilters, filterCreator)
         }
       },
       { threshold: 1.0 }
@@ -165,7 +192,7 @@ export default function ExplorerPage() {
         observer.unobserve(observerTarget.current)
       }
     }
-  }, [hasMore, loading, loadingMore, page, query, activeFilters, fetchFiles])
+  }, [hasMore, loading, loadingMore, page, query, activeFilters, filterCreator, fetchFiles])
 
   const toggleFilter = (type: FileType) => {
     setActiveFilters((prev) => {
@@ -224,28 +251,50 @@ export default function ExplorerPage() {
           </div>
 
           {/* Filters */}
-          <div className="flex items-center gap-2 flex-wrap">
-            <span className="text-sm text-muted-foreground mr-1">Type:</span>
-            {fileTypeFilters.map((type) => (
-              <Badge
-                key={type}
-                variant={activeFilters.has(type) ? "default" : "outline"}
-                className="cursor-pointer capitalize"
-                onClick={() => toggleFilter(type)}
-              >
-                {type}
-              </Badge>
-            ))}
-            {activeFilters.size > 0 && (
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-6 text-xs"
-                onClick={() => setActiveFilters(new Set())}
-              >
-                Clear filters
-              </Button>
-            )}
+          <div className="flex items-center gap-4 flex-wrap">
+            <div className="flex items-center gap-2">
+              <span className="text-sm text-muted-foreground">Created By:</span>
+              <Select value={filterCreator} onValueChange={setFilterCreator}>
+                <SelectTrigger className="w-[180px] h-8 text-xs">
+                  <SelectValue placeholder="All Users" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="ALL">All Users</SelectItem>
+                  {teammates.map((t) => (
+                    <SelectItem key={t.id} value={t.id}>{t.name || t.email}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            
+            <Separator orientation="vertical" className="h-6 hidden sm:block" />
+
+            <div className="flex items-center gap-2 flex-wrap">
+              <span className="text-sm text-muted-foreground mr-1 hidden sm:inline">Type:</span>
+              {fileTypeFilters.map((type) => (
+                <Badge
+                  key={type}
+                  variant={activeFilters.has(type) ? "default" : "outline"}
+                  className="cursor-pointer capitalize"
+                  onClick={() => toggleFilter(type)}
+                >
+                  {type}
+                </Badge>
+              ))}
+              {(activeFilters.size > 0 || filterCreator !== "ALL") && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-6 text-xs"
+                  onClick={() => {
+                    setActiveFilters(new Set())
+                    setFilterCreator("ALL")
+                  }}
+                >
+                  Clear filters
+                </Button>
+              )}
+            </div>
           </div>
 
           {/* Results */}

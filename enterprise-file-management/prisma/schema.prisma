@@ -80,7 +80,9 @@ model FileObject {
   tenant    Tenant       @relation(fields: [tenantId], references: [id])
   parent    FileObject?  @relation("ParentChild", fields: [parentId], references: [id])
   children  FileObject[] @relation("ParentChild")
+  searchVector Unsupported("tsvector")?
 
+  @@index([searchVector], type: Gin)
   @@index([bucketId, key])
   @@index([bucketId, name])
   @@index([tenantId])

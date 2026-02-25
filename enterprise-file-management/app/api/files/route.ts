@@ -1,57 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
+import { Prisma } from "@/lib/generated/prisma";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { decrypt } from "@/lib/encryption";
 import { verifyToken } from "@/lib/token";
 
 export async function GET(request: NextRequest) {
-    // ... (keep existing GET implementation)
-    try {
-        const searchParams = request.nextUrl.searchParams;
-        const bucketId = searchParams.get('bucketId');
-        const parentId = searchParams.get('parentId');
-        const syncAll = searchParams.get('syncAll') === 'true';
+  try {
+    const searchParams = request.nextUrl.searchParams;
+    const bucketId = searchParams.get("bucketId");
+    const parentId = searchParams.get("parentId");
+    const syncAll = searchParams.get("syncAll") === "true";
+    const q = searchParams.get("q")?.trim();
 
-        const where: any = {};
-        if (bucketId) where.bucketId = bucketId;
-        if (parentId) {
-            where.parentId = parentId;
-        } else if (bucketId && !syncAll) {
-            where.parentId = null;
-        }
+    const where: any = {};
+    if (bucketId) where.bucketId = bucketId;
+    if (parentId) {
+      where.parentId = parentId;
+    } else if (bucketId && !syncAll) {
+      where.parentId = null;
+    }
 
-        const files = await prisma.fileObject.findMany({
-            where,
-            orderBy: { isFolder: 'desc' },
-            include: {
-                children: true
-            }
-        });
+    // If a search query is provided, use PostgreSQL tsvector FTS to find matching IDs
+    if (q) {
+      const ftsResults = await prisma.$queryRaw<{ id: string }[]>(
+        Prisma.sql`
+          SELECT id FROM "FileObject"
+          WHERE "searchVector" @@ websearch_to_tsquery('english', ${q})
+          ${bucketId ? Prisma.sql`AND "bucketId" = ${bucketId}` : Prisma.empty}
+        `,
+      );
+      const matchingIds = ftsResults.map((r) => r.id);
 
-        const fileItems = files.map(f => ({
-            id: f.id,
-            name: f.name,
-            type: f.isFolder ? 'folder' : (f.mimeType?.includes('image') ? 'image' : f.mimeType?.includes('pdf') ? 'pdf' : 'document'),
-            size: f.size || 0,
-            modifiedAt: f.updatedAt.toISOString(),
-            owner: 'Admin',
-            shared: false,
-            starred: false,
-            children: f.children.map(c => ({ id: c.id })),
-            // Fields needed for SyncEngine in Electron
-            key: f.key,
-            isFolder: f.isFolder,
-            mimeType: f.mimeType,
-            bucketId: f.bucketId,
-            parentId: f.parentId,
-            createdAt: f.createdAt,
-            updatedAt: f.updatedAt
-        }));
+      // If there are no matches, return an empty array early
+      if (matchingIds.length === 0) {
+        return NextResponse.json([]);
+      }
 
-        return NextResponse.json(fileItems);
-    } catch (error) {
-        console.error('Failed to fetch files:', error);
-        return NextResponse.json({ error: 'Failed to fetch files' }, { status: 500 });
+      // Narrow the existing where clause to only the FTS-matched IDs
+      where.id = { in: matchingIds };
+      // When searching, show results from all levels (don't restrict by parentId)
+      delete where.parentId;
     }
 
     const files = await prisma.fileObject.findMany({
@@ -78,6 +67,14 @@ export async function GET(request: NextRequest) {
       shared: false,
       starred: false,
       children: f.children.map((c) => ({ id: c.id })),
+      // Fields needed for SyncEngine in Electron
+      key: f.key,
+      isFolder: f.isFolder,
+      mimeType: f.mimeType,
+      bucketId: f.bucketId,
+      parentId: f.parentId,
+      createdAt: f.createdAt,
+      updatedAt: f.updatedAt,
     }));
 
     return NextResponse.json(fileItems);
@@ -102,7 +99,7 @@ export async function POST(request: NextRequest) {
     }
     const userId = payload.id;
 
-    const body = await request.json();
+    const body = (await request.json()) as any;
     const { name, isFolder, parentId, bucketId, size, mimeType } = body;
 
     if (!name || !bucketId) {
@@ -192,8 +189,8 @@ export async function POST(request: NextRequest) {
       file = await prisma.fileObject.update({
         where: { id: existingFile.id },
         data: {
-          size: size || 0,
-          mimeType: mimeType || "application/octet-stream",
+          size: (size as number) || 0,
+          mimeType: (mimeType as string) || "application/octet-stream",
           updatedAt: new Date(),
           updatedBy: userId,
         },
@@ -206,8 +203,8 @@ export async function POST(request: NextRequest) {
           tenantId: bucket.tenantId,
           parentId: parentId || null,
           isFolder: isFolder || false,
-          size: size || 0,
-          mimeType: mimeType || "application/octet-stream",
+          size: (size as number) || 0,
+          mimeType: (mimeType as string) || "application/octet-stream",
           key: key,
           createdBy: userId,
           updatedBy: userId,
