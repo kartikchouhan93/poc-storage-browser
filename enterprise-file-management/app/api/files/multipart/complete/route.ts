@@ -29,11 +29,86 @@ export async function POST(request: NextRequest) {
     const { bucketId, key, uploadId, parts, name, size, mimeType, parentId } =
       body;
 
-    if (!bucketId || !key || !uploadId || !parts || !name) {
-      return NextResponse.json(
-        { error: "Missing required fields" },
-        { status: 400 },
-      );
+        if (!bucketId || !key || !uploadId || !parts || !name) {
+            return NextResponse.json({ error: 'Missing required fields' }, { status: 400 });
+        }
+
+        const bucket = await prisma.bucket.findUnique({
+            where: { id: bucketId },
+            include: { account: true }
+        });
+
+        if (!bucket) return NextResponse.json({ error: 'Bucket not found' }, { status: 404 });
+
+        const hasAccess = await checkPermission(user, 'WRITE', {
+            tenantId: bucket.account.tenantId,
+            resourceType: 'bucket',
+            resourceId: bucket.id
+        });
+
+        if (!hasAccess) {
+            return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+        }
+
+        const account = bucket.account;
+        const s3ClientConfig: any = { region: bucket.region };
+        if (account.awsAccessKeyId && account.awsSecretAccessKey) {
+            s3ClientConfig.credentials = {
+                accessKeyId: decrypt(account.awsAccessKeyId),
+                secretAccessKey: decrypt(account.awsSecretAccessKey),
+            };
+        }
+        const s3 = new S3Client(s3ClientConfig);
+
+        const command = new CompleteMultipartUploadCommand({
+            Bucket: bucket.name,
+            Key: key,
+            UploadId: uploadId,
+            MultipartUpload: {
+                Parts: parts,
+            },
+        });
+
+        await s3.send(command);
+
+        // Create or Update Database Record
+        const existingFile = await prisma.fileObject.findFirst({
+            where: {
+                bucketId: bucketId,
+                key: key,
+                isFolder: false
+            }
+        });
+
+        let fileRecord;
+        if (existingFile) {
+            fileRecord = await prisma.fileObject.update({
+                where: { id: existingFile.id },
+                data: {
+                    size: Number(size),
+                    mimeType,
+                    updatedAt: new Date()
+                }
+            });
+        } else {
+            fileRecord = await prisma.fileObject.create({
+                data: {
+                    name,
+                    key, // Use the full S3 key
+                    size: Number(size),
+                    mimeType,
+                    bucketId,
+                    parentId: parentId || null,
+                    isFolder: false,
+                }
+            });
+        }
+
+        return NextResponse.json({ status: 'success', file: fileRecord });
+
+    } catch (error) {
+        console.error('Complete Multipart error:', error);
+        return NextResponse.json({ error: 'Failed to complete upload' }, { status: 500 });
     }
 
     const bucket = await prisma.bucket.findUnique({

@@ -20,6 +20,7 @@ model Tenant {
   users     User[]
   buckets   Bucket[]
   objects   FileObject[]
+  teams     Team[]
 }
 
 model Account {
@@ -57,7 +58,7 @@ model Bucket {
   versioning Boolean     @default(false)
   encryption Boolean     @default(false)
   tags       String[]
-  quotaBytes BigInt      @default(107374182400) // 100GB
+  quotaBytes BigInt       @default(107374182400) // 100GB
 }
 
 model FileObject {
@@ -89,42 +90,25 @@ model FileObject {
 }
 
 model User {
-  id        String           @id @default(cuid())
-  email     String           @unique
-  password  String
-  name      String?
-  role      Role             @default(TEAMMATE)
-  tenantId  String?
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
-  createdBy String?
-  updatedBy String?
-  auditLogs AuditLog[]
-  policies  ResourcePolicy[]
-  // Auditing relations for other models
-  tenantsCreated Tenant[] @relation("TenantCreatedBy")
-  tenantsUpdated Tenant[] @relation("TenantUpdatedBy")
-  accountsCreated Account[] @relation("AccountCreatedBy")
-  accountsUpdated Account[] @relation("AccountUpdatedBy")
-  bucketsCreated Bucket[] @relation("BucketCreatedBy")
-  bucketsUpdated Bucket[] @relation("BucketUpdatedBy")
-  filesCreated FileObject[] @relation("FileObjectCreatedBy")
-  filesUpdated FileObject[] @relation("FileObjectUpdatedBy")
-  usersCreated User[] @relation("UserCreatedBy")
-  usersUpdated User[] @relation("UserUpdatedBy")
-  policiesCreated ResourcePolicy[] @relation("PolicyCreatedBy")
-  policiesUpdated ResourcePolicy[] @relation("PolicyUpdatedBy")
-  auditLogsCreated AuditLog[] @relation("AuditLogCreatedBy")
-  auditLogsUpdated AuditLog[] @relation("AuditLogUpdatedBy")
-  
-  createdByUser User? @relation("UserCreatedBy", fields: [createdBy], references: [id])
-  updatedByUser User? @relation("UserUpdatedBy", fields: [updatedBy], references: [id])
-  tenant    Tenant?          @relation(fields: [tenantId], references: [id])
+  id         String           @id @default(cuid())
+  cognitoSub String?          @unique
+  email      String           @unique
+  password   String?
+  name       String?
+  role       Role             @default(TEAMMATE)
+  tenantId   String?
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
+  auditLogs  AuditLog[]
+  policies   ResourcePolicy[]
+  tenant     Tenant?          @relation(fields: [tenantId], references: [id])
+  teams      TeamMembership[]
 }
 
 model ResourcePolicy {
   id           String   @id @default(cuid())
-  userId       String
+  userId       String?
+  teamId       String?
   resourceType String
   resourceId   String?
   actions      String[]
@@ -135,6 +119,8 @@ model ResourcePolicy {
   createdByUser User?   @relation("PolicyCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User?   @relation("PolicyUpdatedBy", fields: [updatedBy], references: [id])
   user         User     @relation(fields: [userId], references: [id])
+  user         User?    @relation(fields: [userId], references: [id])
+  team         Team?    @relation(fields: [teamId], references: [id])
 }
 
 model AuditLog {
@@ -156,5 +142,50 @@ model AuditLog {
 enum Role {
   PLATFORM_ADMIN
   TENANT_ADMIN
+  TEAM_ADMIN
   TEAMMATE
+}
+
+model Team {
+  id        String           @id @default(cuid())
+  name      String
+  tenantId  String
+  tenant    Tenant           @relation(fields: [tenantId], references: [id])
+  members   TeamMembership[]
+  policies  ResourcePolicy[]
+  createdAt DateTime         @default(now())
+  updatedAt DateTime         @updatedAt
+}
+
+model TeamMembership {
+  id        String   @id @default(cuid())
+  userId    String
+  teamId    String
+  user      User     @relation(fields: [userId], references: [id])
+  team      Team     @relation(fields: [teamId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, teamId])
+}
+
+model SyncHistory {
+  id          String         @id @default(cuid())
+  status      String // "SUCCESS", "FAILED", "IN_PROGRESS"
+  startedAt   DateTime       @default(now())
+  completedAt DateTime?
+  totalFiles  Int            @default(0)
+  syncedFiles Int            @default(0)
+  failedFiles Int            @default(0)
+  activities  SyncActivity[]
+}
+
+model SyncActivity {
+  id        String      @id @default(cuid())
+  historyId String
+  action    String // "UPLOAD", "DOWNLOAD", "SKIP", "DELETE"
+  fileName  String
+  status    String // "SUCCESS", "FAILED"
+  error     String?
+  createdAt DateTime    @default(now())
+  history   SyncHistory @relation(fields: [historyId], references: [id], onDelete: Cascade)
 }
