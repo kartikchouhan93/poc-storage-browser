@@ -2,6 +2,7 @@ import {
   CognitoIdentityProviderClient,
   AdminCreateUserCommand,
   InitiateAuthCommand,
+  AdminUpdateUserAttributesCommand
 } from '@aws-sdk/client-cognito-identity-provider';
 import { fromIni } from '@aws-sdk/credential-providers';
 import crypto from 'crypto';
@@ -48,6 +49,23 @@ export async function inviteUserToCognito(email: string, tenantId?: string, role
     return response.User;
   } catch (error) {
     console.error('Error inviting user to Cognito:', error);
+    throw error;
+  }
+}
+
+export async function updateUserRoleInCognito(email: string, role: string) {
+  try {
+    const command = new AdminUpdateUserAttributesCommand({
+      UserPoolId: USER_POOL_ID,
+      Username: email,
+      UserAttributes: [
+        { Name: 'custom:role', Value: role }
+      ],
+    });
+    const response = await cognitoClient.send(command);
+    return response;
+  } catch (error) {
+    console.error('Error updating user role in Cognito:', error);
     throw error;
   }
 }

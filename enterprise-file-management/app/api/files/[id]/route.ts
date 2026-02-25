@@ -11,6 +11,8 @@ import {
 
 import { decrypt } from "@/lib/encryption";
 import { checkPermission } from "@/lib/rbac";
+import { getS3Client } from "@/lib/s3";
+import { logAudit } from "@/lib/audit";
 
 export async function DELETE(
   request: NextRequest,
@@ -55,20 +57,8 @@ export async function DELETE(
     }
 
     const account = file.bucket.account;
-    if (!account.awsAccessKeyId || !account.awsSecretAccessKey) {
-      return NextResponse.json(
-        { error: "AWS credentials missing" },
-        { status: 422 },
-      );
-    }
 
-    const s3 = new S3Client({
-      region: file.bucket.region,
-      credentials: {
-        accessKeyId: decrypt(account.awsAccessKeyId!),
-        secretAccessKey: decrypt(account.awsSecretAccessKey!),
-      },
-    });
+    const s3 = getS3Client(account, file.bucket.region);
 
     // Use a recursive function to delete S3 objects
     const deleteS3Objects = async (prefix: string) => {
@@ -117,6 +107,15 @@ export async function DELETE(
     // If we rely on cascade in Prisma schema for self-relation:
     await prisma.fileObject.delete({
       where: { id },
+    });
+
+    logAudit({
+      userId: user.id,
+      action: "FILE_DELETE",
+      resource: "FileObject",
+      resourceId: file.id,
+      status: "SUCCESS",
+      details: { bucketId: file.bucket.id, key: file.key }
     });
 
     return NextResponse.json({ success: true });
@@ -185,13 +184,7 @@ export async function PATCH(
     }
 
     const account = file.bucket.account;
-    const s3 = new S3Client({
-      region: file.bucket.region,
-      credentials: {
-        accessKeyId: decrypt(account.awsAccessKeyId!),
-        secretAccessKey: decrypt(account.awsSecretAccessKey!),
-      },
-    });
+    const s3 = getS3Client(account, file.bucket.region);
 
     // Construct new Key
     // Get parent path from old key

@@ -6,16 +6,37 @@ import { DataTable, ColumnDef } from "@/components/ui/data-table";
 import { GenericModal } from "@/components/ui/generic-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Users, Settings, Plus } from "lucide-react";
+import { Users, Plus, Trash2 } from "lucide-react";
+
+import { useAuth } from "@/components/providers/AuthProvider";
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 export default function TeamsPage() {
+  const { user } = useAuth();
+  const router = useRouter();
+
+  React.useEffect(() => {
+    if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
+      router.replace("/");
+    }
+  }, [user, router]);
+
   const [teams, setTeams] = React.useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [teamName, setTeamName] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [searchTerm, setSearchTerm] = React.useState("");
-  const router = useRouter();
 
   React.useEffect(() => {
     fetch("/api/tenant/teams")
@@ -51,6 +72,22 @@ export default function TeamsPage() {
       setError("Unexpected error. Please try again.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteTeam = async (teamId: string) => {
+    try {
+      const res = await fetch(`/api/tenant/teams/${teamId}`, {
+        method: "DELETE",
+      });
+      if (res.ok) {
+        setTeams(teams.filter(t => t.id !== teamId));
+      } else {
+        const err = await res.json();
+        alert(err.error || "Failed to delete team");
+      }
+    } catch (e) {
+      alert("Unexpected error deleting team");
     }
   };
 
@@ -96,18 +133,27 @@ export default function TeamsPage() {
       accessorKey: "actions",
       className: "text-right",
       cell: (row) => (
-        <Button
-          variant="outline"
-          size="sm"
-          className="gap-2"
-          onClick={(e) => {
-            e.stopPropagation();
-            router.push(`/teams/${row.id}`);
-          }}
-        >
-          <Settings className="h-4 w-4" />
-          Manage Permissions
-        </Button>
+        <div onClick={(e) => e.stopPropagation()}>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="sm" className="text-destructive hover:bg-destructive/10">
+                <Trash2 className="h-4 w-4" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                <AlertDialogDescription>
+                  This will soft-delete the team "{row.name}" and remove all user memberships.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => handleDeleteTeam(row.id)}>Delete</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
+        </div>
       ),
     },
   ];

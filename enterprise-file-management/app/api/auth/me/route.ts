@@ -14,5 +14,7 @@ export async function GET() {
         role: user.role,
         tenantId: user.tenantId || '',
         tenantName: (user as any).tenant?.name || '',
+        policies: user.policies || [],
+        teams: user.teams || [],
     });
 }

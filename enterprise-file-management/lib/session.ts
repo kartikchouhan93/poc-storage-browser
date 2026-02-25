@@ -16,7 +16,7 @@ export async function getCurrentUser() {
   try {
     let user = await prisma.user.findUnique({
       where: { email },
-      include: { tenant: true, policies: true, teams: true },
+      include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
     });
 
     if (!user && email) {
@@ -28,13 +28,16 @@ export async function getCurrentUser() {
               ? "PLATFORM_ADMIN"
               : "TEAMMATE",
         },
-        include: { tenant: true, policies: true, teams: true },
+        include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
       });
     }
 
     if (user) {
-      // Sync role and tenantId from Cognito token attributes into DB
-      const cognitoRole = payload["custom:role"] as string | undefined;
+      // Only sync tenantId from Cognito token (for initial tenant assignment).
+      // IMPORTANT: We do NOT sync role from the token because:
+      //   - The DB role is the source of truth (updated via admin actions)
+      //   - The Cognito token may be stale (issued before a role change)
+      //   - Syncing would overwrite an admin's DB role change on next refresh
       const cognitoTenantId = payload["custom:tenantId"] as string | undefined;
 
       // Verify tenantId exists locally before trying to set it (FK constraint)
@@ -46,18 +49,11 @@ export async function getCurrentUser() {
         if (tenantExists) validTenantId = cognitoTenantId;
       }
 
-      const needsUpdate =
-        (cognitoRole && user.role !== cognitoRole) ||
-        validTenantId !== undefined;
-
-      if (needsUpdate) {
+      if (validTenantId !== undefined) {
         user = await prisma.user.update({
           where: { email },
-          data: {
-            ...(cognitoRole ? { role: cognitoRole as any } : {}),
-            ...(validTenantId ? { tenantId: validTenantId } : {}),
-          },
-          include: { tenant: true, policies: true, teams: true },
+          data: { tenantId: validTenantId },
+          include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
         });
       }
     }

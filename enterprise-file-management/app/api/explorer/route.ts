@@ -16,10 +16,20 @@ export async function GET(request: NextRequest) {
 
     const email = payload.email as string;
 
-    // Look up tenantId from DB — Cognito token may not have it directly
+    // Look up full user from DB including role and policies for RBAC
     const dbUser = await prisma.user.findUnique({
       where: { email },
-      select: { tenantId: true },
+      select: {
+        tenantId: true,
+        role: true,
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: {
+            team: { include: { policies: true } }
+          }
+        }
+      },
     });
 
     if (!dbUser?.tenantId) {
@@ -30,6 +40,45 @@ export async function GET(request: NextRequest) {
     }
 
     const tenantId = dbUser.tenantId;
+
+    // ── RBAC: Compute allowed bucket IDs for TEAMMATE ────────────────────
+    let allowedBucketIdFilter: string[] | null = null; // null = all buckets
+
+    if (dbUser.role !== "PLATFORM_ADMIN" && dbUser.role !== "TENANT_ADMIN") {
+      // Collect policies from direct assignments AND team memberships
+      const allPolicies: any[] = [
+        ...(dbUser.policies || []),
+        ...(dbUser.teams || []).flatMap((m: any) => m.team?.policies || []),
+      ];
+
+      const hasGlobalAccess = allPolicies.some(
+        (p: any) =>
+          p.resourceType?.toLowerCase() === "bucket" &&
+          p.resourceId === null &&
+          (p.actions.includes("READ") || p.actions.includes("LIST")),
+      );
+
+      if (!hasGlobalAccess) {
+        const bucketIds = allPolicies
+          .filter(
+            (p: any) =>
+              p.resourceType?.toLowerCase() === "bucket" &&
+              p.resourceId !== null &&
+              (p.actions.includes("READ") || p.actions.includes("LIST")),
+          )
+          .map((p: any) => p.resourceId as string);
+
+        allowedBucketIdFilter = [...new Set(bucketIds)];
+
+        // No accessible buckets → return empty
+        if (allowedBucketIdFilter.length === 0) {
+          return NextResponse.json({
+            data: [],
+            metadata: { total: 0, page: 1, limit: 20, totalPages: 0 },
+          });
+        }
+      }
+    }
 
     const searchParams = request.nextUrl.searchParams;
     const query = searchParams.get("q");
@@ -124,6 +173,9 @@ export async function GET(request: NextRequest) {
 
       if (bucketId) {
         conditions.push(Prisma.sql`f."bucketId" = ${bucketId}`);
+      } else if (allowedBucketIdFilter !== null) {
+        // TEAMMATE: restrict to allowed buckets only
+        conditions.push(Prisma.sql`f."bucketId" = ANY(${allowedBucketIdFilter}::text[])`);
       }
       if (createdBy) {
         conditions.push(Prisma.sql`f."createdBy" = ${createdBy}`);
@@ -211,7 +263,12 @@ export async function GET(request: NextRequest) {
         isFolder: false,
       };
 
-      if (bucketId) where.bucketId = bucketId;
+      if (bucketId) {
+        where.bucketId = bucketId;
+      } else if (allowedBucketIdFilter !== null) {
+        // TEAMMATE: restrict to allowed buckets only
+        where.bucketId = { in: allowedBucketIdFilter };
+      }
       if (createdBy) where.createdBy = createdBy;
 
       if (typeConditions.length > 0) {

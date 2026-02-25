@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/session';
+import { logAudit } from '@/lib/audit';
 
 export async function POST(
     request: NextRequest,
@@ -37,9 +38,18 @@ export async function POST(
             return NextResponse.json({ error: 'Team not found' }, { status: 404 });
         }
 
-        // Use createMany or Unchecked approach to avoid "user argument missing" Prisma error
-        const membership = await prisma.teamMembership.create({
-            data: {
+        // Use upsert to resurrect a soft-deleted membership or create a new one
+        const membership = await prisma.teamMembership.upsert({
+            where: {
+                userId_teamId: {
+                    userId,
+                    teamId
+                }
+            },
+            update: {
+                isDeleted: false
+            },
+            create: {
                 teamId,
                 userId,
             },
@@ -53,6 +63,15 @@ export async function POST(
                     }
                 }
             }
+        });
+
+        logAudit({
+            userId: user.id,
+            action: "TEAM_MEMBER_ADDED",
+            resource: "TeamMembership",
+            resourceId: membership.id,
+            status: "SUCCESS",
+            details: { teamId, targetUserId: userId }
         });
 
         return NextResponse.json(membership);

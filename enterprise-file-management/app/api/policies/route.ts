@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { verifyToken } from '@/lib/token';
 import { Role } from '@/lib/generated/prisma/client';
+import { logAudit } from '@/lib/audit';
 
 export async function GET(request: NextRequest) {
     const token = request.headers.get('Authorization')?.split(' ')[1];
@@ -81,6 +82,15 @@ export async function POST(request: NextRequest) {
         }
     });
 
+    logAudit({
+        userId: requester.id,
+        action: "PERMISSION_ADDED",
+        resource: "ResourcePolicy",
+        resourceId: policy.id,
+        status: "SUCCESS",
+        details: { targetUserId: userId, resourceType, resourceId, actions }
+    });
+
     return NextResponse.json(policy, { status: 201 });
 }
 
@@ -113,6 +123,17 @@ export async function DELETE(request: NextRequest) {
     }
 
     await prisma.resourcePolicy.delete({ where: { id: policyId } });
+
+    if (requester) {
+        logAudit({
+            userId: requester.id,
+            action: "PERMISSION_REMOVED",
+            resource: "ResourcePolicy",
+            resourceId: policyId,
+            status: "SUCCESS",
+            details: { targetUserId: policy.userId, resourceType: policy.resourceType, resourceId: policy.resourceId, actions: policy.actions }
+        });
+    }
 
     return NextResponse.json({ success: true });
 }

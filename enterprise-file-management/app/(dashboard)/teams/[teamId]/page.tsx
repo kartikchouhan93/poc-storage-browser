@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { useParams, useRouter } from 'next/navigation';
 import { GenericTable } from '@/components/ui/generic-table';
+import { DataTable } from '@/components/ui/data-table';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
@@ -11,9 +12,19 @@ import { Shield, Users, Trash2 } from 'lucide-react';
 import { GenericModal } from '@/components/ui/generic-modal';
 import { Checkbox } from '@/components/ui/checkbox';
 
+import { useAuth } from '@/components/providers/AuthProvider';
+
 export default function TeamDetailPage() {
+  const { user } = useAuth();
   const params = useParams();
   const router = useRouter();
+
+  React.useEffect(() => {
+    if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
+      router.replace("/");
+    }
+  }, [user, router]);
+
   const teamId = params.teamId as string;
 
   const [team, setTeam] = React.useState<any>(null);
@@ -31,7 +42,7 @@ export default function TeamDetailPage() {
   const [matrix, setMatrix] = React.useState<Record<string, Record<string, boolean>>>({});
   const [savingPolicies, setSavingPolicies] = React.useState(false);
 
-  const ACTIONS = ['READ', 'WRITE', 'DELETE', 'SHARE'];
+  const ACTIONS = ['READ', 'WRITE', 'DELETE', 'SHARE', 'DOWNLOAD'];
 
   React.useEffect(() => {
     // Fetch team details
@@ -145,13 +156,24 @@ export default function TeamDetailPage() {
   };
 
   const handleCheckboxChange = (bucketId: string, action: string, checked: boolean) => {
-      setMatrix(prev => ({
-          ...prev,
-          [bucketId]: {
-              ...prev[bucketId],
-              [action]: checked
+      setMatrix(prev => {
+          const newRow = { ...prev[bucketId], [action]: checked };
+          
+          if (checked && action !== 'READ') {
+              newRow['READ'] = true;
           }
-      }));
+          if (!checked && action === 'READ') {
+               newRow['WRITE'] = false;
+               newRow['DELETE'] = false;
+               newRow['SHARE'] = false;
+               newRow['DOWNLOAD'] = false;
+          }
+
+          return {
+              ...prev,
+              [bucketId]: newRow
+          };
+      });
   };
 
   if (!team) return <div className="p-8 text-center text-muted-foreground">Loading team...</div>;
@@ -173,8 +195,55 @@ export default function TeamDetailPage() {
     }
   ];
 
-  // Users not currently in team
-  const availableUsers = tenantUsers.filter(tu => !team.members.find((m: any) => m.userId === tu.id));
+  // Users not currently in team (or soft deleted)
+  const availableUsers = tenantUsers.filter(tu => !team.members.find((m: any) => m.userId === tu.id && !m.isDeleted));
+
+  const filteredAvailableUsers = availableUsers.filter(u => 
+     u.email.toLowerCase().includes(searchQuery.toLowerCase()) || 
+     (u.name || '').toLowerCase().includes(searchQuery.toLowerCase())
+  );
+
+  const addMemberColumns = [
+    {
+       header: 'User',
+       accessorKey: 'name',
+       cell: (row: any) => (
+           <div className="flex flex-col gap-0.5 min-w-[150px]">
+              <span className="font-medium text-slate-900 dark:text-slate-100">{row.name || '—'}</span>
+              <span className="text-xs text-muted-foreground">{row.email}</span>
+           </div>
+       )
+    },
+    {
+       header: 'Teams part of',
+       accessorKey: 'teams',
+       cell: (row: any) => {
+          const activeTeams = row.teams?.filter((t: any) => !t.isDeleted)?.map((t: any) => t.team?.name);
+          return (
+             <span className="text-xs text-muted-foreground whitespace-nowrap">
+                {activeTeams?.length ? activeTeams.join(', ') : 'None'}
+             </span>
+          );
+       }
+    },
+    {
+       header: 'Action',
+       accessorKey: 'action',
+       className: "text-right w-[80px]",
+       cell: (row: any) => (
+           <Button 
+              size="sm" 
+              variant={selectedUserId === row.id ? "default" : "outline"}
+              onClick={(e) => {
+                 e.stopPropagation();
+                 setSelectedUserId(row.id);
+              }}
+           >
+              {selectedUserId === row.id ? "Selected" : "Select"}
+           </Button>
+       )
+    }
+  ];
 
   return (
     <div className="space-y-6 px-4 md:px-6 lg:px-8 py-6">
@@ -186,7 +255,7 @@ export default function TeamDetailPage() {
          <p className="text-muted-foreground mt-1">Manage team members and configure granular bucket access.</p>
       </div>
 
-      <Tabs defaultValue="members" className="w-full mt-6">
+      <Tabs defaultValue="permissions" className="w-full mt-6">
         <TabsList className="mb-4">
           <TabsTrigger value="members" className="gap-2">
              <Users className="h-4 w-4" /> Members
@@ -211,49 +280,17 @@ export default function TeamDetailPage() {
                   }
                >
                    <div className="space-y-4">
-                       <Input 
-                           placeholder="Search user by name or email..." 
-                           value={searchQuery} 
-                           onChange={e => setSearchQuery(e.target.value)}
-                           className="w-full"
-                       />
                        {availableUsers.length === 0 ? (
                            <p className="text-sm text-muted-foreground">All tenant users are already in this team.</p>
                        ) : (
-                           <div className="border rounded-md bg-slate-50 dark:bg-slate-900 border-slate-200 dark:border-slate-800 max-h-60 overflow-y-auto">
-                              <table className="w-full text-sm text-left border-collapse">
-                                 <thead className="bg-slate-100 dark:bg-slate-800/50 text-xs text-muted-foreground uppercase sticky top-0 z-10 shadow-sm">
-                                    <tr>
-                                       <th className="px-4 py-3 font-medium text-left">User</th>
-                                       <th className="px-4 py-3 font-medium text-left whitespace-nowrap">Teams part of</th>
-                                       <th className="px-4 py-3 font-medium text-right w-[100px]">Action</th>
-                                    </tr>
-                                 </thead>
-                                 <tbody className="divide-y divide-slate-200 dark:divide-slate-800 bg-white dark:bg-slate-950">
-                                    {availableUsers.filter(u => u.email.toLowerCase().includes(searchQuery.toLowerCase()) || (u.name || '').toLowerCase().includes(searchQuery.toLowerCase())).map(u => (
-                                        <tr key={u.id} className="hover:bg-slate-50 dark:hover:bg-slate-900/50 transition-colors">
-                                           <td className="px-4 py-3">
-                                              <div className="flex flex-col gap-0.5">
-                                                 <span className="font-medium text-slate-900 dark:text-slate-100">{u.name || '—'}</span>
-                                                 <span className="text-xs text-muted-foreground">{u.email}</span>
-                                              </div>
-                                           </td>
-                                           <td className="px-4 py-3 text-xs text-muted-foreground whitespace-nowrap">
-                                              {u.teams?.map((t: any) => t.team?.name).join(', ') || 'None'}
-                                           </td>
-                                           <td className="px-4 py-3 text-right">
-                                              <Button 
-                                                 size="sm" 
-                                                 variant={selectedUserId === u.id ? "default" : "outline"}
-                                                 onClick={() => setSelectedUserId(u.id)}
-                                              >
-                                                 {selectedUserId === u.id ? "Selected" : "Select"}
-                                              </Button>
-                                           </td>
-                                        </tr>
-                                    ))}
-                                 </tbody>
-                              </table>
+                           <div className="max-h-[60vh] overflow-y-auto">
+                               <DataTable 
+                                   columns={addMemberColumns} 
+                                   data={filteredAvailableUsers}
+                                   searchPlaceholder="Search user by name or email..."
+                                   onSearch={setSearchQuery}
+                                   emptyMessage="No users found."
+                               />
                            </div>
                        )}
                    </div>

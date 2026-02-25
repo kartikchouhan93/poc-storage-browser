@@ -16,7 +16,7 @@ async function main() {
     if (!UserPool) throw new Error("User pool not found");
 
     const htmlMessage = `
-<p>Hello <b>{name}</b>,</p>
+<p>Hello,</p>
 <p>You have been invited to use Enterprise File Management.</p>
 <br>
 <p>Here are your login details:</p>

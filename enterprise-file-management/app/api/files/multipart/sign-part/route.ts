@@ -1,10 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { S3Client, UploadPartCommand } from "@aws-sdk/client-s3";
+import { UploadPartCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
-import { decrypt } from "@/lib/encryption";
 import { checkPermission } from "@/lib/rbac";
+import { getS3Client } from "@/lib/s3";
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,14 +53,8 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
-    const s3ClientConfig: any = { region: bucket.region };
-    if (account.awsAccessKeyId && account.awsSecretAccessKey) {
-      s3ClientConfig.credentials = {
-        accessKeyId: decrypt(account.awsAccessKeyId),
-        secretAccessKey: decrypt(account.awsSecretAccessKey),
-      };
-    }
-    const s3 = new S3Client(s3ClientConfig);
+
+    const s3 = getS3Client(account, bucket.region);
 
     const command = new UploadPartCommand({
       Bucket: bucket.name,

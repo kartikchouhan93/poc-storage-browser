@@ -29,10 +29,17 @@ export async function GET(request: NextRequest) {
     } else if (user.role === Role.TENANT_ADMIN) {
       whereClause = { account: { tenantId: user.tenantId } };
     } else {
-      // TEAMMATE — check resource policies
-      const hasGlobalAccess = user.policies.some(
+      // TEAMMATE — collect ALL policies from both direct assignments and team memberships
+      const allPolicies: any[] = [
+        ...(user.policies || []),
+        ...((user as any).teams || []).flatMap((membership: any) =>
+          membership.team?.policies || []
+        ),
+      ];
+
+      const hasGlobalAccess = allPolicies.some(
         (p: any) =>
-          p.resourceType === "bucket" &&
+          p.resourceType?.toLowerCase() === "bucket" &&
           p.resourceId === null &&
           (p.actions.includes("READ") || p.actions.includes("LIST")),
       );
@@ -40,23 +47,26 @@ export async function GET(request: NextRequest) {
       if (hasGlobalAccess) {
         whereClause = { account: { tenantId: user.tenantId } };
       } else {
-        const allowedBucketIds = user.policies
+        const allowedBucketIds = allPolicies
           .filter(
             (p: any) =>
-              p.resourceType === "bucket" &&
+              p.resourceType?.toLowerCase() === "bucket" &&
               p.resourceId !== null &&
               (p.actions.includes("READ") || p.actions.includes("LIST")),
           )
           .map((p: any) => p.resourceId);
 
-        if (allowedBucketIds.length === 0)
+        // Deduplicate
+        const uniqueBucketIds = [...new Set(allowedBucketIds)];
+
+        if (uniqueBucketIds.length === 0)
           return NextResponse.json({
             data: [],
             metadata: { total: 0, page, limit, totalPages: 0 },
           });
 
         whereClause = {
-          id: { in: allowedBucketIds },
+          id: { in: uniqueBucketIds },
           account: { tenantId: user.tenantId },
         };
       }

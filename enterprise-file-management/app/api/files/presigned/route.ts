@@ -1,10 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { getSignedUrl } from "@aws-sdk/s3-request-presigner";
 import { decrypt } from "@/lib/encryption";
 import { checkPermission } from "@/lib/rbac";
+import { getS3Client } from "@/lib/s3";
+import { logAudit } from "@/lib/audit";
 
 export async function GET(request: NextRequest) {
   try {
@@ -63,12 +65,6 @@ export async function GET(request: NextRequest) {
     }
 
     const account = bucket.account;
-    if (!account.awsAccessKeyId || !account.awsSecretAccessKey) {
-      return NextResponse.json(
-        { error: "AWS credentials missing for this account" },
-        { status: 422 },
-      );
-    }
 
     // Determine Key
     let key: string = paramKey || (name as string);
@@ -83,13 +79,8 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    const s3 = new S3Client({
-      region: bucket.region,
-      credentials: {
-        accessKeyId: decrypt(account.awsAccessKeyId!),
-        secretAccessKey: decrypt(account.awsSecretAccessKey!),
-      },
-    });
+    // Support fallback to environment AWS_PROFILE credentials
+    const s3 = getS3Client(account, bucket.region);
 
     let command;
     if (action === "download" || action === "read") {
@@ -112,6 +103,16 @@ export async function GET(request: NextRequest) {
     }
 
     const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
+    
+    // Log audit asynchronously
+    logAudit({
+      userId: user.id,
+      action: action === "download" ? "FILE_DOWNLOAD" : action === "read" ? "FILE_READ" : "FILE_UPLOAD_INITIATED",
+      resource: "FileObject",
+      status: "SUCCESS",
+      details: { bucketId: bucket.id, key, action }
+    });
+    
     return NextResponse.json({ url, key });
   } catch (error) {
     console.error("Presigned URL error:", error);

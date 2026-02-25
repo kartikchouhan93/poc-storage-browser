@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { S3Client, CompleteMultipartUploadCommand } from "@aws-sdk/client-s3";
-import { decrypt } from "@/lib/encryption";
+import { CompleteMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { checkPermission } from "@/lib/rbac";
+import { getS3Client } from "@/lib/s3";
+import { logAudit } from "@/lib/audit";
 
 export async function POST(request: NextRequest) {
   try {
@@ -53,20 +54,8 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
-    if (!account.awsAccessKeyId || !account.awsSecretAccessKey) {
-      return NextResponse.json(
-        { error: "AWS credentials missing for this account" },
-        { status: 422 },
-      );
-    }
 
-    const s3 = new S3Client({
-      region: bucket.region,
-      credentials: {
-        accessKeyId: decrypt(account.awsAccessKeyId!),
-        secretAccessKey: decrypt(account.awsSecretAccessKey!),
-      },
-    });
+    const s3 = getS3Client(account, bucket.region);
 
     const command = new CompleteMultipartUploadCommand({
       Bucket: bucket.name,
@@ -115,6 +104,15 @@ export async function POST(request: NextRequest) {
         },
       });
     }
+
+    logAudit({
+      userId: user.id,
+      action: "FILE_UPLOAD",
+      resource: "FileObject",
+      resourceId: fileRecord.id,
+      status: "SUCCESS",
+      details: { bucketId: bucket.id, key, size }
+    });
 
     return NextResponse.json({ status: "success", file: fileRecord });
   } catch (error) {
