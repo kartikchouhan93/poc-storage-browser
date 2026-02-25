@@ -328,7 +328,7 @@ export default function BucketsPage() {
       </header>
 
       <div className="flex-1 overflow-auto bg-muted/10 h-full">
-        <div className="p-6 space-y-6 max-w-7xl mx-auto">
+        <div className="p-6 space-y-6">
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold tracking-tight">Buckets</h1>

@@ -1,9 +1,6 @@
-"use client"
-
-import * as React from "react"
+import * as React from "react";
 import {
   ArrowDownToLine,
-  Download,
   Eye,
   FileUp,
   Plus,
@@ -12,29 +9,21 @@ import {
   Upload,
   UserPlus,
   RefreshCw,
-} from "lucide-react"
-import {
-  Area,
-  AreaChart,
-  CartesianGrid,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-  Legend,
-} from "recharts"
-import { SidebarTrigger } from "@/components/ui/sidebar"
-import { Separator } from "@/components/ui/separator"
+  Download,
+} from "lucide-react";
+import { CostChart } from "@/components/audit/cost-chart";
+import { SidebarTrigger } from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
 import {
   Breadcrumb,
   BreadcrumbItem,
   BreadcrumbList,
   BreadcrumbPage,
-} from "@/components/ui/breadcrumb"
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs"
-import { Badge } from "@/components/ui/badge"
-import { Button } from "@/components/ui/button"
+} from "@/components/ui/breadcrumb";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -42,21 +31,18 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/components/ui/table"
+} from "@/components/ui/table";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { toast } from "sonner"
-import {
-  mockAuditLogs,
-  mockCostData,
-  formatDateTime,
-} from "@/lib/mock-data"
-import { SearchCommandDialog } from "@/components/search-command"
+} from "@/components/ui/select";
+import { mockCostData, formatDateTime } from "@/lib/mock-data";
+import { SearchCommandDialog } from "@/components/search-command";
+import { getAuditLogs } from "@/app/actions/audit";
+import { AuditLog } from "@/lib/generated/prisma/client";
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -68,7 +54,7 @@ const actionIcons: Record<string, React.ElementType> = {
   view: Eye,
   invite_user: UserPlus,
   sync: RefreshCw,
-}
+};
 
 const actionColors: Record<string, string> = {
   upload: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
@@ -80,17 +66,18 @@ const actionColors: Record<string, string> = {
   view: "bg-gray-500/10 text-gray-600 dark:text-gray-400",
   invite_user: "bg-indigo-500/10 text-indigo-600 dark:text-indigo-400",
   sync: "bg-teal-500/10 text-teal-600 dark:text-teal-400",
-}
+};
 
-const latestCost = mockCostData[mockCostData.length - 1]
+const latestCost = mockCostData[mockCostData.length - 1];
 
-export default function AuditPage() {
-  const [actionFilter, setActionFilter] = React.useState<string>("all")
+export default async function AuditPage() {
+  // We can eventually move actionFilter to a URL search parameter to make this fully SSR-friendly with filters
+  // For now, replacing the client-side state with server-fetched data. The filter tab will still be there but
+  // currently we'll just display all logs for MVP, or we can use a client component wrapper.
+  // To keep it simple, we'll fetch all logs up front.
 
-  const filteredLogs =
-    actionFilter === "all"
-      ? mockAuditLogs
-      : mockAuditLogs.filter((log) => log.action === actionFilter)
+  const result = await getAuditLogs();
+  const logs = result.success ? (result.data as any[]) : [];
 
   return (
     <>
@@ -114,275 +101,25 @@ export default function AuditPage() {
               Audit & Sync Logs
             </h1>
             <p className="text-sm text-muted-foreground mt-1">
-              Monitor storage costs, manage file syncing activities, and review user audit logs.
+              Monitor storage costs, manage file syncing activities, and review
+              user audit logs.
             </p>
           </div>
 
-          <Tabs defaultValue="costs" className="space-y-6">
-            <TabsList>
-              <TabsTrigger value="costs">Cost Overview</TabsTrigger>
-              <TabsTrigger value="logs">Sync & Activity Logs</TabsTrigger>
-            </TabsList>
-
-            {/* Cost Overview */}
-            <TabsContent value="costs" className="space-y-6">
-              {/* Cost Cards */}
-              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Storage
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-semibold">
-                      ${latestCost.storage.toLocaleString()}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      GB x Tier Rate
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Requests
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-semibold">
-                      ${latestCost.requests.toLocaleString()}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      GET/PUT/LIST ops
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Data Transfer
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-semibold">
-                      ${latestCost.transfer.toLocaleString()}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      Outbound data
-                    </p>
-                  </CardContent>
-                </Card>
-                <Card>
-                  <CardHeader className="pb-2">
-                    <CardTitle className="text-sm font-medium text-muted-foreground">
-                      Total Monthly
-                    </CardTitle>
-                  </CardHeader>
-                  <CardContent>
-                    <div className="text-2xl font-semibold text-primary">
-                      ${latestCost.total.toLocaleString()}
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-1">
-                      +7.6% from last month
-                    </p>
-                  </CardContent>
-                </Card>
-              </div>
-
-              {/* Cost Chart */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base font-medium">
-                    Cost Breakdown Over Time
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="h-[350px]">
-                    <ResponsiveContainer width="100%" height="100%">
-                      <AreaChart data={mockCostData}>
-                        <defs>
-                          <linearGradient
-                            id="colorStorage"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="5%"
-                              stopColor="var(--color-chart-1)"
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor="var(--color-chart-1)"
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                          <linearGradient
-                            id="colorRequests"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="5%"
-                              stopColor="var(--color-chart-2)"
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor="var(--color-chart-2)"
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                          <linearGradient
-                            id="colorTransfer"
-                            x1="0"
-                            y1="0"
-                            x2="0"
-                            y2="1"
-                          >
-                            <stop
-                              offset="5%"
-                              stopColor="var(--color-chart-5)"
-                              stopOpacity={0.3}
-                            />
-                            <stop
-                              offset="95%"
-                              stopColor="var(--color-chart-5)"
-                              stopOpacity={0}
-                            />
-                          </linearGradient>
-                        </defs>
-                        <CartesianGrid
-                          strokeDasharray="3 3"
-                          stroke="var(--color-border)"
-                          vertical={false}
-                        />
-                        <XAxis
-                          dataKey="month"
-                          fontSize={12}
-                          tickLine={false}
-                          axisLine={false}
-                          stroke="var(--color-muted-foreground)"
-                        />
-                        <YAxis
-                          fontSize={12}
-                          tickLine={false}
-                          axisLine={false}
-                          stroke="var(--color-muted-foreground)"
-                          tickFormatter={(value) => `$${value}`}
-                        />
-                        <Tooltip
-                          contentStyle={{
-                            backgroundColor: "var(--color-popover)",
-                            border: "1px solid var(--color-border)",
-                            borderRadius: "var(--radius-md)",
-                            color: "var(--color-popover-foreground)",
-                            fontSize: 12,
-                          }}
-                          formatter={(value: number, name: string) => [
-                            `$${value}`,
-                            name.charAt(0).toUpperCase() + name.slice(1),
-                          ]}
-                        />
-                        <Legend
-                          wrapperStyle={{ fontSize: 12 }}
-                          formatter={(value: string) =>
-                            value.charAt(0).toUpperCase() + value.slice(1)
-                          }
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="storage"
-                          stroke="var(--color-chart-1)"
-                          strokeWidth={2}
-                          fill="url(#colorStorage)"
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="requests"
-                          stroke="var(--color-chart-2)"
-                          strokeWidth={2}
-                          fill="url(#colorRequests)"
-                        />
-                        <Area
-                          type="monotone"
-                          dataKey="transfer"
-                          stroke="var(--color-chart-5)"
-                          strokeWidth={2}
-                          fill="url(#colorTransfer)"
-                        />
-                      </AreaChart>
-                    </ResponsiveContainer>
-                  </div>
-                </CardContent>
-              </Card>
-
-              {/* Cost Formula */}
-              <Card>
-                <CardHeader>
-                  <CardTitle className="text-base font-medium">
-                    Cost Formula
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <div className="rounded-md bg-secondary p-4 font-mono text-sm">
-                    <p className="text-foreground">
-                      {'Total Monthly Cost = (Storage GB x Tier Rate) + (Request Count x Request Rate) + (Data Transfer Out GB x Transfer Rate)'}
-                    </p>
-                    <div className="mt-3 space-y-1 text-muted-foreground text-xs">
-                      <p>{'Standard: $0.023/GB | IA: $0.0125/GB | Glacier: $0.004/GB | Deep Archive: $0.00099/GB'}</p>
-                      <p>{'GET: $0.0004/1K requests | PUT: $0.005/1K requests'}</p>
-                      <p>{'Data Transfer Out: $0.09/GB (first 10 TB)'}</p>
-                    </div>
-                  </div>
-                </CardContent>
-              </Card>
-            </TabsContent>
-
-            {/* Audit Logs */}
-            <TabsContent value="logs" className="space-y-4">
+     
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <div className="flex items-center gap-2">
-                  <Select
-                    value={actionFilter}
-                    onValueChange={setActionFilter}
-                  >
+                  {/* Filter disabled temporarily while moving to SSR logs */}
+                  <Select defaultValue="all" disabled>
                     <SelectTrigger className="w-[160px] h-8 text-xs">
                       <SelectValue placeholder="Filter by action" />
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="all">All Actions</SelectItem>
-                      <SelectItem value="upload">Upload</SelectItem>
-                      <SelectItem value="download">Download</SelectItem>
-                      <SelectItem value="delete">Delete</SelectItem>
-                      <SelectItem value="share">Share</SelectItem>
-                      <SelectItem value="modify">Modify</SelectItem>
-                      <SelectItem value="view">View</SelectItem>
-                      <SelectItem value="create_bucket">
-                        Create Bucket
-                      </SelectItem>
-                      <SelectItem value="invite_user">
-                        Invite User
-                      </SelectItem>
-                      <SelectItem value="sync">
-                        Folder Sync
-                      </SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="gap-1.5"
-                  onClick={() =>
-                    toast.success("Audit log export started")
-                  }
-                >
+                <Button variant="outline" size="sm" className="gap-1.5">
                   <ArrowDownToLine className="h-4 w-4" />
                   Export CSV
                 </Button>
@@ -407,53 +144,100 @@ export default function AuditPage() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {filteredLogs.map((log) => {
-                      const Icon = actionIcons[log.action] || Eye
+                    {logs.map((log) => {
+                      // Map standardized DB action names to our icon keys
+                      // e.g., FILE_UPLOAD -> upload, FOLDER_CREATE -> create_bucket, TEAM_MEMBER_ADDED -> invite_user
+                      let iconKey = "view";
+                      const action = log.action.toLowerCase();
+
+                      if (action.includes("upload")) iconKey = "upload";
+                      else if (action.includes("download"))
+                        iconKey = "download";
+                      else if (
+                        action.includes("delete") ||
+                        action.includes("remove")
+                      )
+                        iconKey = "delete";
+                      else if (
+                        action.includes("share") ||
+                        action.includes("permission")
+                      )
+                        iconKey = "share";
+                      else if (action.includes("create"))
+                        iconKey = "create_bucket";
+                      else if (
+                        action.includes("team") ||
+                        action.includes("login")
+                      )
+                        iconKey = "invite_user";
+
+                      const Icon = actionIcons[iconKey] || Eye;
+
+                      const details = (log.details as any) || {};
+                      const resourceId = log.resourceId || "-";
+                      const displayResource =
+                        details.name ||
+                        details.key ||
+                        details.email ||
+                        resourceId;
+
                       return (
                         <TableRow key={log.id}>
                           <TableCell>
                             <Badge
                               variant="secondary"
                               className={`gap-1 capitalize ${
-                                actionColors[log.action] || ""
+                                actionColors[iconKey] || actionColors["view"]
                               }`}
                             >
                               <Icon className="h-3 w-3" />
-                              {log.action.replace("_", " ")}
+                              {log.action.replace(/_/g, " ")}
                             </Badge>
                           </TableCell>
                           <TableCell>
                             <div>
                               <p className="text-sm font-medium">
-                                {log.user}
+                                {log.user?.name || "Unknown"}
                               </p>
                               <p className="text-xs text-muted-foreground">
-                                {log.userEmail}
+                                {log.user?.email || "N/A"}
                               </p>
                             </div>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground max-w-[200px] truncate">
-                            {log.file}
+                          <TableCell
+                            className="hidden md:table-cell text-sm text-muted-foreground max-w-[200px] truncate"
+                            title={displayResource}
+                          >
+                            {displayResource}
                           </TableCell>
                           <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
-                            {log.bucket}
+                            {details.bucketName || (details.bucketId ? "S3 Bucket" : log.resource.split(':')[0])}
                           </TableCell>
                           <TableCell className="hidden lg:table-cell text-sm text-muted-foreground font-mono text-xs">
-                            {log.ip}
+                            {details.ip || "System"}
                           </TableCell>
                           <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(log.timestamp)}
+                            {formatDateTime(log.createdAt.toISOString())}
                           </TableCell>
                         </TableRow>
-                      )
+                      );
                     })}
+                    {logs.length === 0 && (
+                      <TableRow>
+                        <TableCell
+                          colSpan={6}
+                          className="text-center py-8 text-muted-foreground"
+                        >
+                          No audit logs found.
+                        </TableCell>
+                      </TableRow>
+                    )}
                   </TableBody>
                 </Table>
               </div>
-            </TabsContent>
-          </Tabs>
+           
         </div>
       </div>
     </>
-  )
+  );
 }

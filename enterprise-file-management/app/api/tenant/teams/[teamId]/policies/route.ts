@@ -2,15 +2,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/session';
 
-export async function PUT(request: NextRequest, { params }: { params: { teamId: string } }) {
+export async function PUT(request: NextRequest, { params }: { params: Promise<{ teamId: string }> }) {
     try {
+        const { teamId } = await params;
         const user = await getCurrentUser();
         if (!user || user.role !== 'TENANT_ADMIN' || !user.tenantId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
         }
 
         const team = await prisma.team.findFirst({
-            where: { id: params.teamId, tenantId: user.tenantId }
+            where: { id: teamId, tenantId: user.tenantId }
         });
 
         if (!team) {
@@ -28,14 +29,14 @@ export async function PUT(request: NextRequest, { params }: { params: { teamId: 
             // 1. Delete all existing bucket policies for this team
             await tx.resourcePolicy.deleteMany({
                 where: {
-                    teamId: params.teamId,
+                    teamId: teamId,
                     resourceType: 'Bucket'
                 }
             });
 
             // 2. Create the new policies
             const policiesToCreate = Object.entries(policies).map(([bucketId, actions]) => ({
-                teamId: params.teamId,
+                teamId: teamId,
                 resourceType: 'Bucket',
                 resourceId: bucketId,
                 actions: Array.isArray(actions) ? actions : []
@@ -50,7 +51,7 @@ export async function PUT(request: NextRequest, { params }: { params: { teamId: 
 
         // Return updated policies
         const updatedPolicies = await prisma.resourcePolicy.findMany({
-            where: { teamId: params.teamId }
+            where: { teamId: teamId }
         });
 
         return NextResponse.json({ success: true, policies: updatedPolicies });

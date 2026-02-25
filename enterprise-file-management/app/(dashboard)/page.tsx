@@ -39,13 +39,14 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
 import {
-  mockAuditLogs,
   mockBuckets,
   mockCostData,
   formatBytes,
   formatDateTime,
 } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
+import { getAuditLogs } from "@/app/actions/audit"
+import { useEffect, useState } from "react"
 
 const stats = [
   {
@@ -93,6 +94,15 @@ import { useAuth } from "@/components/providers/AuthProvider"
 
 export default function OverviewPage() {
   const { user } = useAuth()
+  const [recentLogs, setRecentLogs] = useState<any[]>([])
+
+  useEffect(() => {
+    getAuditLogs().then(res => {
+      if (res.success && res.data) {
+        setRecentLogs(res.data.slice(0, 6));
+      }
+    });
+  }, []);
 
   return (
     <>
@@ -350,8 +360,19 @@ export default function OverviewPage() {
               </CardHeader>
               <CardContent>
                 <div className="space-y-4">
-                  {mockAuditLogs.slice(0, 6).map((log) => {
-                    const Icon = actionIcons[log.action] || Eye
+                  {recentLogs.map((log) => {
+                    let iconKey = "view";
+                    const action = log.action.toLowerCase() || "";
+                    if (action.includes("upload")) iconKey = "upload";
+                    else if (action.includes("download")) iconKey = "download";
+                    else if (action.includes("delete") || action.includes("remove")) iconKey = "delete";
+                    else if (action.includes("share") || action.includes("permission")) iconKey = "share";
+                    else if (action.includes("create")) iconKey = "create_bucket";
+                    
+                    const Icon = actionIcons[iconKey] || Eye
+                    const details = log.details || {};
+                    const displayResource = details.name || details.key || details.email || log.resourceId || log.resource;
+                    
                     return (
                       <div key={log.id} className="flex items-start gap-3">
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary">
@@ -360,25 +381,28 @@ export default function OverviewPage() {
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2">
                             <span className="text-sm font-medium truncate">
-                              {log.user}
+                              {log.user?.name || "Unknown"}
                             </span>
                             <Badge
                               variant="secondary"
                               className="text-[10px] px-1.5 py-0"
                             >
-                              {log.action}
+                              {log.action.replace(/_/g, " ")}
                             </Badge>
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
-                            {log.file} in {log.bucket}
+                            {displayResource} {details.bucketName ? `in ${details.bucketName}` : ''}
                           </p>
                         </div>
                         <span className="text-xs text-muted-foreground whitespace-nowrap">
-                          {formatDateTime(log.timestamp)}
+                          {formatDateTime(log.createdAt)}
                         </span>
                       </div>
                     )
                   })}
+                  {recentLogs.length === 0 && (
+                    <div className="text-sm text-muted-foreground text-center py-4">No recent activity</div>
+                  )}
                 </div>
               </CardContent>
             </Card>

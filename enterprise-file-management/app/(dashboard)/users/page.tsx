@@ -13,7 +13,15 @@ import { getTenants } from "@/app/actions/tenants";
 import { getTeams } from "@/app/actions/teams";
 import { UserList } from "@/components/users/user-list";
 
+import { getCurrentUser } from "@/lib/session";
+import { redirect } from "next/navigation";
+
 export default async function UsersPage() {
+  const user = await getCurrentUser();
+  
+  if (!user || (user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN")) {
+    redirect("/");
+  }
   const { data: rawUsers = [] } = await getUsers();
   const { data: rawTenants = [] } = await getTenants();
   const { data: rawTeams = [] } = await getTeams();

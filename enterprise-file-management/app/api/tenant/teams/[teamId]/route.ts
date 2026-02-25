@@ -1,9 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/session';
+import { logAudit } from '@/lib/audit';
 
-export async function GET(request: NextRequest, { params }: { params: { teamId: string } }) {
+export async function GET(request: NextRequest, { params }: { params: Promise<{ teamId: string }> }) {
     try {
+        const { teamId } = await params;
         const user = await getCurrentUser();
         if (!user || !user.tenantId) {
             return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
@@ -11,11 +13,13 @@ export async function GET(request: NextRequest, { params }: { params: { teamId: 
 
         const team = await prisma.team.findFirst({
             where: { 
-                id: params.teamId,
-                tenantId: user.tenantId 
+                id: teamId,
+                tenantId: user.tenantId,
+                isDeleted: false
             },
             include: {
                 members: {
+                    where: { isDeleted: false },
                     include: {
                         user: {
                             select: {
@@ -42,26 +46,35 @@ export async function GET(request: NextRequest, { params }: { params: { teamId: 
     }
 }
 
-export async function DELETE(request: NextRequest, { params }: { params: { teamId: string } }) {
+export async function DELETE(request: NextRequest, { params }: { params: Promise<{ teamId: string }> }) {
     try {
+        const { teamId } = await params;
         const user = await getCurrentUser();
         if (!user || user.role !== 'TENANT_ADMIN' || !user.tenantId) {
             return NextResponse.json({ error: 'Unauthorized or insufficient permissions' }, { status: 401 });
         }
 
-        await prisma.resourcePolicy.deleteMany({
-            where: { teamId: params.teamId }
+        // Soft delete all memberships
+        await prisma.teamMembership.updateMany({
+            where: { teamId },
+            data: { isDeleted: true }
         });
 
-        await prisma.teamMembership.deleteMany({
-            where: { teamId: params.teamId }
-        });
-
-        await prisma.team.delete({
+        // Soft delete the team itself
+        await prisma.team.update({
             where: {
-                id: params.teamId,
-                tenantId: user.tenantId
-            }
+                id: teamId,
+            },
+            data: { isDeleted: true }
+        });
+
+        logAudit({
+            userId: user.id,
+            action: "TEAM_DELETED",
+            resource: "Team",
+            resourceId: teamId,
+            status: "SUCCESS",
+            details: { tenantId: user.tenantId }
         });
 
         return NextResponse.json({ success: true });

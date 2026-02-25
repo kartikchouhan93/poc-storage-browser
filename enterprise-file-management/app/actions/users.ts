@@ -2,7 +2,7 @@
 
 import prisma from "@/lib/prisma"
 import { getCurrentUser } from "@/lib/session"
-import { inviteUserToCognito } from "@/lib/auth-service"
+import { inviteUserToCognito, updateUserRoleInCognito } from "@/lib/auth-service"
 import { Role } from "@/lib/generated/prisma/client"
 import { revalidatePath } from "next/cache"
 
@@ -59,9 +59,11 @@ export async function inviteUser(formData: FormData) {
             return { success: false, error: "Unauthorized" }
         }
 
+        console.log("@@@ currentUse", currentUser)
+
         if (currentUser.role !== "PLATFORM_ADMIN") {
             if (currentUser.role !== "TENANT_ADMIN" || currentUser.tenantId !== tenantId) {
-                return { success: false, error: "Unauthorized to invite to this tenant" }
+                return { success: false, error: `Unauthorized to invite to this tenant. Expected role TENANT_ADMIN, got ${currentUser.role}. Expected tenant ${tenantId}, got ${currentUser.tenantId}.` }
             }
         }
 
@@ -84,5 +86,45 @@ export async function inviteUser(formData: FormData) {
     } catch (error) {
         console.error("Failed to invite user:", error)
         return { success: false, error: "Failed to invite user. Email might be in use." }
+    }
+}
+
+export async function updateUserRole(userId: string, newRole: Role) {
+    try {
+        const currentUser = await getCurrentUser()
+        if (!currentUser) {
+            return { success: false, error: "Unauthorized" }
+        }
+
+        const targetUser = await prisma.user.findUnique({ where: { id: userId } })
+        if (!targetUser) {
+            return { success: false, error: "User not found" }
+        }
+
+        if (currentUser.role !== "PLATFORM_ADMIN") {
+            if (currentUser.role !== "TENANT_ADMIN" || currentUser.tenantId !== targetUser.tenantId) {
+                return { success: false, error: "Unauthorized to modify this user's role" }
+            }
+        }
+
+        // Prevent tenant admin from demoting themselves (optional, but good practice)
+        if (currentUser.id === userId && currentUser.role === "TENANT_ADMIN" && newRole !== "TENANT_ADMIN") {
+            return { success: false, error: "Cannot demote yourself" }
+        }
+
+        // 1. Update Cognito so the next session gets the correct token
+        await updateUserRoleInCognito(targetUser.email, newRole);
+
+        // 2. Update Database
+        await prisma.user.update({
+            where: { id: userId },
+            data: { role: newRole }
+        })
+
+        revalidatePath("/users")
+        return { success: true }
+    } catch (error) {
+        console.error("Failed to change user role:", error)
+        return { success: false, error: "Failed to update user role" }
     }
 }

@@ -47,30 +47,63 @@ import { ThemeToggle } from "@/components/theme-toggle";
 import { useAuth } from "@/components/providers/AuthProvider";
 
 const platformAdminNav = [
-  { title: "Overview", icon: LayoutDashboard, href: "/" },
+  { title: "Home", icon: LayoutDashboard, href: "/" },
   { title: "Tenants", icon: Building, href: "/tenants" },
   { title: "Manage Users", icon: Users, href: "/users" },
   { title: "Buckets", icon: HardDrive, href: "/buckets" },
 ];
 
-const tenantNav = [
-  { title: "Dashboard", icon: LayoutDashboard, href: "/" },
-  { title: "Buckets", icon: HardDrive, href: "/buckets" },
-  { title: "File Explorer", icon: FolderOpen, href: "/explorer" },
-  { title: "Users", icon: User, href: "/users" },
-  { title: "Teams", icon: Users, href: "/teams" },
-  { title: "Shares", icon: Share2, href: "/shares" },
-  { title: "Audit", icon: FileText, href: "/audit" },
-  { title: "Settings", icon: Settings, href: "/settings" },
+const tenantNavGroups = [
+  {
+    title: "",
+    items: [
+      { title: "Home", icon: LayoutDashboard, href: "/" },
+    ]
+  },
+  {
+    title: "Storage",
+    items: [
+      { title: "Buckets", icon: HardDrive, href: "/buckets" },
+      { title: "File Explorer", icon: FolderOpen, href: "/explorer" },
+    ]
+  },
+  {
+    title: "Collaboration",
+    items: [
+      { title: "Shares", icon: Share2, href: "/shares" },
+      { title: "Users", icon: User, href: "/users" },
+      { title: "Teams", icon: Users, href: "/teams" },
+    ]
+  },
+  {
+    title: "Administration",
+    items: [
+      { title: "Audit", icon: FileText, href: "/audit" },
+      { title: "Settings", icon: Settings, href: "/settings" },
+    ]
+  }
 ];
 
 export function AppSidebar() {
   const pathname = usePathname();
   const { user, logout } = useAuth();
 
-  let navItems = tenantNav;
+  let navGroups = tenantNavGroups;
   if (user?.role === "PLATFORM_ADMIN") {
-    navItems = platformAdminNav;
+    navGroups = [
+      { title: "Platform", items: platformAdminNav }
+    ];
+  } else if (user?.role !== "TENANT_ADMIN") {
+    // Teammate: filter out Users and Teams from Collaboration
+    navGroups = tenantNavGroups.map(group => {
+      if (group.title === "Collaboration") {
+        return {
+          ...group,
+          items: group.items.filter(item => item.title !== "Users" && item.title !== "Teams")
+        };
+      }
+      return group;
+    });
   }
 
   if (!user) return null;
@@ -112,28 +145,35 @@ export function AppSidebar() {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {navItems.map((item) => {
-                const isActive = item.href === "/" 
-                    ? pathname === "/" 
-                    : pathname.startsWith(item.href);
-                    
-                return (
-                  <SidebarMenuItem key={item.title}>
-                    <SidebarMenuButton asChild isActive={isActive}>
-                      <Link href={item.href}>
-                        <item.icon className="h-4 w-4" />
-                        <span>{item.title}</span>
-                      </Link>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                );
-              })}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        {navGroups.map((group, idx) => (
+          <SidebarGroup key={idx}>
+            {group.title && (
+              <SidebarGroupLabel className="text-xs font-semibold text-muted-foreground uppercase tracking-wider mt-4 first:mt-0">
+                {group.title}
+              </SidebarGroupLabel>
+            )}
+            <SidebarGroupContent>
+              <SidebarMenu>
+                {group.items.map((item) => {
+                  const isActive = item.href === "/" 
+                      ? pathname === "/" 
+                      : pathname.startsWith(item.href);
+                      
+                  return (
+                    <SidebarMenuItem key={item.title}>
+                      <SidebarMenuButton asChild isActive={isActive}>
+                        <Link href={item.href}>
+                          <item.icon className="h-4 w-4" />
+                          <span>{item.title}</span>
+                        </Link>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  );
+                })}
+              </SidebarMenu>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        ))}
       </SidebarContent>
 
       <SidebarFooter>

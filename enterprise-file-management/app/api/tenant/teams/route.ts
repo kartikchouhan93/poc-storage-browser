@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { getCurrentUser } from '@/lib/session';
+import { logAudit } from '@/lib/audit';
 
 export async function GET(request: NextRequest) {
     try {
@@ -10,7 +11,7 @@ export async function GET(request: NextRequest) {
         }
 
         const teams = await prisma.team.findMany({
-            where: { tenantId: user.tenantId },
+            where: { tenantId: user.tenantId, isDeleted: false },
             include: {
                 _count: {
                     select: { members: true }
@@ -49,6 +50,15 @@ export async function POST(request: NextRequest) {
                     select: { members: true }
                 }
             }
+        });
+
+        logAudit({
+            userId: user.id,
+            action: "TEAM_CREATED",
+            resource: "Team",
+            resourceId: team.id,
+            status: "SUCCESS",
+            details: { name: team.name, tenantId: user.tenantId }
         });
 
         return NextResponse.json(team);

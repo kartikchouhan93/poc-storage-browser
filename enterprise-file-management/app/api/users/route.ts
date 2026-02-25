@@ -34,6 +34,7 @@ export async function GET(request: NextRequest) {
             role: true,
             tenantId: true,
             createdAt: true,
+            hasLoggedIn: true,
             teams: {
                 select: {
                     team: {

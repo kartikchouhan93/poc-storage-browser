@@ -6,6 +6,7 @@ import { DataTable, ColumnDef } from "@/components/ui/data-table";
 import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { TeamMappingModal } from "./team-mapping-modal";
+import { ChangeRoleModal } from "./change-role-modal";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -24,6 +25,8 @@ interface UserItem {
   role: string;
   tenantName: string;
   createdAt: string;
+  status?: string;
+  hasLoggedIn?: boolean;
   teams?: any[];
 }
 
@@ -43,7 +46,19 @@ interface UserListProps {
   availableTeams: TeamItem[];
 }
 
+import { useAuth } from "@/components/providers/AuthProvider";
+import { useRouter } from "next/navigation";
+
 export function UserList({ initialUsers, tenants, availableTeams }: UserListProps) {
+  const { user } = useAuth();
+  const router = useRouter();
+  
+  React.useEffect(() => {
+    if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
+      router.replace("/");
+    }
+  }, [user, router]);
+
   const { can } = usePermission();
   const [users, setUsers] = React.useState<UserItem[]>(initialUsers);
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -52,9 +67,17 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
   const [mappingUser, setMappingUser] = React.useState<UserItem | null>(null);
   const [isMappingOpen, setIsMappingOpen] = React.useState(false);
 
+  // Change Role Modal State
+  const [roleUser, setRoleUser] = React.useState<UserItem | null>(null);
+  const [isRoleOpen, setIsRoleOpen] = React.useState(false);
+
   React.useEffect(() => {
     setUsers(initialUsers);
   }, [initialUsers]);
+
+  if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
+    return null;
+  }
 
   const filteredUsers = users.filter(
     (user) =>
@@ -66,6 +89,11 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
   const handleMapTeams = (user: UserItem) => {
     setMappingUser(user);
     setIsMappingOpen(true);
+  };
+
+  const handleChangeRole = (user: UserItem) => {
+    setRoleUser(user);
+    setIsRoleOpen(true);
   };
 
   const columns: ColumnDef<UserItem>[] = [
@@ -98,6 +126,18 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
           {user.role.toLowerCase().replace("_", " ")}
         </Badge>
       ),
+    },
+    {
+      header: "Status",
+      accessorKey: "status",
+      cell: (user) => {
+        const isActive = user.hasLoggedIn;
+        return (
+          <Badge variant={isActive ? "secondary" : "outline"} className={isActive ? "bg-emerald-500/15 text-emerald-700 hover:bg-emerald-500/25" : "text-muted-foreground"}>
+            {isActive ? "Active" : "Pending Invite"}
+          </Badge>
+        );
+      },
     },
     {
       header: "Tenant",
@@ -154,7 +194,7 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
               <Users className="mr-2 h-4 w-4" />
               Map Teams
             </DropdownMenuItem>
-            <DropdownMenuItem disabled>
+            <DropdownMenuItem onClick={() => handleChangeRole(user)} disabled={!can('UPDATE', { resourceType: 'user' })}>
               <Shield className="mr-2 h-4 w-4" />
               Change Role
             </DropdownMenuItem>
@@ -182,7 +222,7 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
         <div>
           <h1 className="text-3xl font-bold tracking-tight">Users</h1>
           <p className="text-muted-foreground mt-1">
-            All users who have access to the platform and their respective tenants.
+            Manage users and roles within your tenant.
           </p>
         </div>
         {can('CREATE', { resourceType: 'user' }) && (
@@ -210,9 +250,15 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
         onClose={() => setIsMappingOpen(false)}
         user={mappingUser}
         availableTeams={availableTeams}
+        onSuccess={() => {}}
+      />
+
+      <ChangeRoleModal
+        isOpen={isRoleOpen}
+        onClose={() => setIsRoleOpen(false)}
+        user={roleUser}
         onSuccess={() => {
-          // A real implementation would re-fetch, but since we are revalidating path in server action,
-          // the page should reload the fresh data automatically from next/cache.
+          // Revalidated by server action
         }}
       />
     </div>

@@ -4,6 +4,8 @@ import { Prisma } from "@/lib/generated/prisma/client";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { decrypt } from "@/lib/encryption";
 import { verifyToken } from "@/lib/token";
+import { getS3Client } from "@/lib/s3";
+import { logAudit } from "@/lib/audit";
 
 export async function GET(request: NextRequest) {
   try {
@@ -130,10 +132,8 @@ export async function POST(request: NextRequest) {
 
     const account = bucket.account;
     if (!account.awsAccessKeyId || !account.awsSecretAccessKey) {
-      return NextResponse.json(
-        { error: "AWS credentials missing for this account" },
-        { status: 422 },
-      );
+      // NOTE: Removed strict credential blocking here, as `getS3Client` handles fallbacks.
+      // We will let S3 SDK attempt to find credentials.
     }
 
     // 2. Determine the full Key (path)
@@ -150,13 +150,7 @@ export async function POST(request: NextRequest) {
     // 3. If it's a folder, create it in S3
     if (isFolder) {
       try {
-        const s3 = new S3Client({
-          region: bucket.region,
-          credentials: {
-            accessKeyId: decrypt(account.awsAccessKeyId!),
-            secretAccessKey: decrypt(account.awsSecretAccessKey!),
-          },
-        });
+        const s3 = getS3Client(account, bucket.region);
 
         // S3 folders are typically represented by a zero-byte object with a trailing slash
         const s3Key = key.endsWith("/") ? key : `${key}/`;
@@ -212,6 +206,17 @@ export async function POST(request: NextRequest) {
           updatedBy: user.id,
         },
       });
+      
+      if (isFolder) {
+          logAudit({
+              userId: user.id,
+              action: "FOLDER_CREATE",
+              resource: "FileObject",
+              resourceId: file.id,
+              status: "SUCCESS",
+              details: { name, bucketId, key }
+          });
+      }
     }
 
     return NextResponse.json(file);

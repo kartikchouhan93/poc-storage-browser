@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { authenticateCognitoUser } from '@/lib/auth-service';
+import { logAudit } from '@/lib/audit';
 
 export async function POST(request: NextRequest) {
     try {
@@ -42,10 +43,23 @@ export async function POST(request: NextRequest) {
         try {
             user = await prisma.user.upsert({
                 where: { email: cleanEmail },
-                update: {},
+                update: { hasLoggedIn: true },
                 create: {
                     email: cleanEmail,
                     role: defaultRole as any,
+                    hasLoggedIn: true,
+                },
+                include: {
+                    policies: true,
+                    teams: {
+                        include: {
+                            team: {
+                                include: {
+                                    policies: true
+                                }
+                            }
+                        }
+                    }
                 }
             });
         } catch(prismaErr) {
@@ -59,6 +73,8 @@ export async function POST(request: NextRequest) {
             name: user?.name || '',
             id: user?.id || '',
             accessToken: authResult.IdToken,
+            policies: user?.policies || [],
+            teams: user?.teams || [],
         };
         const response = NextResponse.json(responseBody);
 
@@ -81,6 +97,16 @@ export async function POST(request: NextRequest) {
                 sameSite: 'strict',
                 path: '/',
                 maxAge: 60 * 60 * 24 * 7 
+            });
+        }
+
+        if (user) {
+            logAudit({
+                userId: user.id,
+                action: "LOGIN",
+                resource: "Authentication",
+                status: "SUCCESS",
+                details: { email: cleanEmail, role: user.role }
             });
         }
 

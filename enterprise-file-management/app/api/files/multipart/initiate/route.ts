@@ -1,9 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
-import { S3Client, CreateMultipartUploadCommand } from "@aws-sdk/client-s3";
-import { decrypt } from "@/lib/encryption";
+import { CreateMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { checkPermission } from "@/lib/rbac";
+import { getS3Client } from "@/lib/s3";
+import { logAudit } from "@/lib/audit";
 
 export async function POST(request: NextRequest) {
   try {
@@ -64,14 +65,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const s3ClientConfig: any = { region: bucket.region };
-    if (account.awsAccessKeyId && account.awsSecretAccessKey) {
-      s3ClientConfig.credentials = {
-        accessKeyId: decrypt(account.awsAccessKeyId),
-        secretAccessKey: decrypt(account.awsSecretAccessKey),
-      };
-    }
-    const s3 = new S3Client(s3ClientConfig);
+    const s3 = getS3Client(account, bucket.region);
 
     const command = new CreateMultipartUploadCommand({
       Bucket: bucket.name,
@@ -80,6 +74,14 @@ export async function POST(request: NextRequest) {
     });
 
     const { UploadId } = await s3.send(command);
+
+    logAudit({
+      userId: user.id,
+      action: "MULTIPART_UPLOAD_INITIATED",
+      resource: "FileObject",
+      status: "SUCCESS",
+      details: { bucketId: bucket.id, key }
+    });
 
     return NextResponse.json({ uploadId: UploadId, key });
   } catch (error) {

@@ -11,7 +11,7 @@ export interface ResourceContext {
 
 export type Action = 'READ' | 'WRITE' | 'DELETE' | 'LIST';
 
-export async function checkPermission(user: User & { policies: any[] }, action: Action, context: ResourceContext): Promise<boolean> {
+export async function checkPermission(user: User & { policies: any[], teams?: any[] }, action: Action, context: ResourceContext): Promise<boolean> {
     // 1. Platform Admin: Access everything
     if (user.role === Role.PLATFORM_ADMIN) {
         return true;
@@ -23,21 +23,32 @@ export async function checkPermission(user: User & { policies: any[] }, action: 
         return false;
     }
 
-    // 3. Tenant Admin: Access everything within tenant
+    // 3. Tenant Admin: Access everything within tenant (Unless explicit granular check is desired, but typically Admins see all)
+    // To strictly enforce policies even on Admins, we would fall through to TEAMMATE logic.
+    // However, for this platform, TENANT_ADMIN inherently has access to all buckets in their tenant.
     if (user.role === Role.TENANT_ADMIN) {
         return true;
     }
 
     // 4. Teammate: Check Policies
     if (user.role === Role.TEAMMATE) {
-        // Simple check: Do they have a policy for this specific resource?
-        // Logic:
-        // - Search policies for matching resourceType and resourceId (or null for global/all of type)
-        // - Check if actions list contains the requested action
+        let allPolicies: any[] = [];
 
-        const hasPermission = user.policies.some(policy => {
-            const typeMatch = policy.resourceType === context.resourceType;
-            const idMatch = policy.resourceId === null || policy.resourceId === context.resourceId;
+        if (user.policies) {
+            allPolicies = [...allPolicies, ...user.policies];
+        }
+
+        if (user.teams) {
+            user.teams.forEach((membership: any) => {
+                if (membership.team && membership.team.policies) {
+                    allPolicies = [...allPolicies, ...membership.team.policies];
+                }
+            });
+        }
+
+        const hasPermission = allPolicies.some(policy => {
+            const typeMatch = policy.resourceType?.toLowerCase() === context.resourceType?.toLowerCase();
+            const idMatch = policy.resourceId === null || policy.resourceId === undefined || policy.resourceId === context.resourceId;
             const actionMatch = policy.actions.includes(action);
 
             return typeMatch && idMatch && actionMatch;

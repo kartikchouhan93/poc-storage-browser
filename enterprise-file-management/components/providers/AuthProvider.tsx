@@ -13,6 +13,7 @@ interface User {
     tenantId: string;
     tenantName?: string;
     policies?: any[];
+    teams?: any[];
 }
 
 interface AuthContextType {
