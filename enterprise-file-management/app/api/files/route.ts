@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
-import { Prisma } from "@/lib/generated/prisma";
+import { Prisma } from "@/lib/generated/prisma/client";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import { decrypt } from "@/lib/encryption";
 import { verifyToken } from "@/lib/token";
@@ -93,100 +93,17 @@ export async function POST(request: NextRequest) {
     if (!token)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        if (!name || !bucketId) {
-            return NextResponse.json({ error: 'Name and bucketId are required' }, { status: 400 });
-        }
+    const payload = await verifyToken(token);
+    if (!payload || typeof payload !== "object" || !payload.email)
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-        // 1. Fetch Bucket and Account to get credentials
-        const bucket = await prisma.bucket.findUnique({
-            where: { id: bucketId },
-            include: { account: true }
-        });
+    const user = await prisma.user.findUnique({
+      where: { email: payload.email as string },
+      include: { policies: true },
+    });
 
-        if (!bucket || !bucket.account) {
-            return NextResponse.json({ error: 'Bucket or associated account not found' }, { status: 404 });
-        }
-
-        const account = bucket.account;
-
-        // 2. Determine the full Key (path)
-        let key = name;
-        if (parentId) {
-            const parent = await prisma.fileObject.findUnique({ where: { id: parentId } });
-            if (parent) {
-                // Assuming parent.key is the clean path like "folder1" or "folder1/subfolder"
-                // We append the new name.
-                // Note: Standard S3 keys don't usually start with /, but let's mimic parent's style
-                // If parent.key is empty or just name, we append.
-                key = `${parent.key}/${name}`;
-            }
-        }
-
-        // 3. If it's a folder, create it in S3
-        if (isFolder) {
-            try {
-                const s3ClientConfig: any = { region: bucket.region };
-                if (account.awsAccessKeyId && account.awsSecretAccessKey) {
-                    s3ClientConfig.credentials = {
-                        accessKeyId: decrypt(account.awsAccessKeyId),
-                        secretAccessKey: decrypt(account.awsSecretAccessKey),
-                    };
-                }
-                const s3 = new S3Client(s3ClientConfig);
-
-                // S3 folders are typically represented by a zero-byte object with a trailing slash
-                const s3Key = key.endsWith('/') ? key : `${key}/`;
-
-                await s3.send(new PutObjectCommand({
-                    Bucket: bucket.name,
-                    Key: s3Key,
-                    Body: '', // Empty body for folder
-                }));
-            } catch (s3Error: any) {
-                console.error('Failed to create folder in S3:', s3Error);
-                return NextResponse.json({ error: `S3 Sync Failed: ${s3Error.message}` }, { status: 502 });
-            }
-        }
-
-        // 4. Update or Create Record in DB (Upsert behavior without unique constraint)
-        const existingFile = await prisma.fileObject.findFirst({
-            where: {
-                bucketId: bucketId,
-                key: key,
-                isFolder: isFolder || false
-            }
-        });
-
-        let file;
-        if (existingFile) {
-            file = await prisma.fileObject.update({
-                where: { id: existingFile.id },
-                data: {
-                    size: size || 0,
-                    mimeType: mimeType || 'application/octet-stream',
-                    updatedAt: new Date()
-                }
-            });
-        } else {
-            file = await prisma.fileObject.create({
-                data: {
-                    name,
-                    bucketId,
-                    parentId: parentId || null,
-                    isFolder: isFolder || false,
-                    size: size || 0,
-                    mimeType: mimeType || 'application/octet-stream',
-                    key: key
-                }
-            });
-        }
-
-        return NextResponse.json(file);
-    } catch (error) {
-        console.error('Failed to create file:', error);
-        return NextResponse.json({ error: 'Failed to create file' }, { status: 500 });
-    }
-    const userId = payload.id;
+    if (!user)
+      return NextResponse.json({ error: "User not found" }, { status: 404 });
 
     const body = (await request.json()) as any;
     const { name, isFolder, parentId, bucketId, size, mimeType } = body;
@@ -226,10 +143,6 @@ export async function POST(request: NextRequest) {
         where: { id: parentId },
       });
       if (parent) {
-        // Assuming parent.key is the clean path like "folder1" or "folder1/subfolder"
-        // We append the new name.
-        // Note: Standard S3 keys don't usually start with /, but let's mimic parent's style
-        // If parent.key is empty or just name, we append.
         key = `${parent.key}/${name}`;
       }
     }
@@ -281,7 +194,7 @@ export async function POST(request: NextRequest) {
           size: (size as number) || 0,
           mimeType: (mimeType as string) || "application/octet-stream",
           updatedAt: new Date(),
-          updatedBy: userId,
+          updatedBy: user.id,
         },
       });
     } else {
@@ -295,8 +208,8 @@ export async function POST(request: NextRequest) {
           size: (size as number) || 0,
           mimeType: (mimeType as string) || "application/octet-stream",
           key: key,
-          createdBy: userId,
-          updatedBy: userId,
+          createdBy: user.id,
+          updatedBy: user.id,
         },
       });
     }

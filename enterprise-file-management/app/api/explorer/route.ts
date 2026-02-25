@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
+import { Prisma } from "@/lib/generated/prisma/client";
 
 export async function GET(request: NextRequest) {
   try {
@@ -39,25 +40,11 @@ export async function GET(request: NextRequest) {
     const limit = parseInt(searchParams.get("limit") || "50");
     const skip = (page - 1) * limit;
 
-    const where: any = {
-      tenantId,
-      isFolder: false, // File Explorer only shows files, not folders
-    };
-
-    if (bucketId) where.bucketId = bucketId;
-    if (createdBy) where.createdBy = createdBy;
-
-    if (query) {
-      where.OR = [
-        { name: { contains: query, mode: "insensitive" } },
-        { key: { contains: query, mode: "insensitive" } },
-      ];
-    }
-
+    // ── Build type-filter mime conditions (shared between both paths) ──────
+    type MimeFilter = { mimeType?: object; name?: object; OR?: MimeFilter[] };
+    const typeConditions: MimeFilter[] = [];
     if (typesParam) {
       const types = typesParam.split(",");
-      const typeConditions: any[] = [];
-
       types.forEach((t) => {
         if (t === "image")
           typeConditions.push({
@@ -113,44 +100,157 @@ export async function GET(request: NextRequest) {
             ],
           });
       });
-
-      if (typeConditions.length > 0) {
-        if (where.OR) {
-          where.AND = [{ OR: where.OR }, { OR: typeConditions }];
-          delete where.OR;
-        } else {
-          where.OR = typeConditions;
-        }
-      }
     }
 
-    const [total, files] = await Promise.all([
-      prisma.fileObject.count({ where }),
-      prisma.fileObject.findMany({
-        where,
-        orderBy: { createdAt: "desc" }, // Latest first
-        include: {
-          bucket: {
-            select: { name: true },
-          },
-          createdByUser: {
-            select: { name: true, email: true },
-          },
-        },
-        skip,
-        take: limit,
-      }),
-    ]);
+    // ── FTS path: use searchVector when query is provided ──────────────────
+    let files: any[];
+    let total: number;
 
+    if (query) {
+      // Build WHERE clauses for the raw SQL
+      const conditions: Prisma.Sql[] = [
+        Prisma.sql`f."tenantId" = ${tenantId}`,
+        Prisma.sql`f."isFolder" = false`,
+        // Use FTS if searchVector is populated, otherwise fall back to ILIKE
+        Prisma.sql`(
+          (f."searchVector" IS NOT NULL AND f."searchVector" @@ websearch_to_tsquery('english', ${query}))
+          OR
+          (f."searchVector" IS NULL AND (
+            f.name ILIKE ${"%" + query + "%"}
+            OR f.key ILIKE ${"%" + query + "%"}
+          ))
+        )`,
+      ];
+
+      if (bucketId) {
+        conditions.push(Prisma.sql`f."bucketId" = ${bucketId}`);
+      }
+      if (createdBy) {
+        conditions.push(Prisma.sql`f."createdBy" = ${createdBy}`);
+      }
+
+      // Apply type filters in the FTS path via raw SQL
+      if (typesParam) {
+        const types = typesParam.split(",");
+        const typeSqlParts: Prisma.Sql[] = [];
+        types.forEach((t) => {
+          if (t === "image")
+            typeSqlParts.push(Prisma.sql`f."mimeType" ILIKE '%image%'`);
+          else if (t === "video")
+            typeSqlParts.push(Prisma.sql`f."mimeType" ILIKE '%video%'`);
+          else if (t === "audio")
+            typeSqlParts.push(Prisma.sql`f."mimeType" ILIKE '%audio%'`);
+          else if (t === "pdf")
+            typeSqlParts.push(
+              Prisma.sql`(f."mimeType" ILIKE '%pdf%' OR f.name ILIKE '%.pdf')`,
+            );
+          else if (t === "document")
+            typeSqlParts.push(
+              Prisma.sql`(f.name ILIKE '%.docx' OR f.name ILIKE '%.doc' OR f.name ILIKE '%.txt')`,
+            );
+          else if (t === "spreadsheet")
+            typeSqlParts.push(
+              Prisma.sql`(f.name ILIKE '%.xlsx' OR f.name ILIKE '%.csv' OR f.name ILIKE '%.xls')`,
+            );
+          else if (t === "archive")
+            typeSqlParts.push(
+              Prisma.sql`(f.name ILIKE '%.zip' OR f.name ILIKE '%.tar' OR f.name ILIKE '%.gz')`,
+            );
+          else if (t === "code")
+            typeSqlParts.push(
+              Prisma.sql`(f.name ILIKE '%.js' OR f.name ILIKE '%.ts' OR f.name ILIKE '%.json' OR f.name ILIKE '%.html' OR f.name ILIKE '%.css')`,
+            );
+        });
+        if (typeSqlParts.length > 0) {
+          conditions.push(Prisma.sql`(${Prisma.join(typeSqlParts, " OR ")})`);
+        }
+      }
+
+      const whereClause = Prisma.join(conditions, " AND ");
+
+      // Count query
+      const countResult = await prisma.$queryRaw<{ count: bigint }[]>`
+        SELECT COUNT(*) AS count
+        FROM "FileObject" f
+        WHERE ${whereClause}
+      `;
+      total = Number(countResult[0].count);
+
+      // Data query — join bucket and user for display fields
+      files = await prisma.$queryRaw<any[]>`
+        SELECT
+          f.id,
+          f.name,
+          f.key,
+          f."mimeType",
+          f.size,
+          f."createdAt",
+          f."bucketId",
+          f."tenantId",
+          f."createdBy",
+          b.name AS "bucketName",
+          u.name AS "ownerName",
+          u.email AS "ownerEmail",
+          -- FTS rank for ordering (higher rank = better match)
+          CASE
+            WHEN f."searchVector" IS NOT NULL
+            THEN ts_rank(f."searchVector", websearch_to_tsquery('english', ${query}))
+            ELSE 0
+          END AS rank
+        FROM "FileObject" f
+        JOIN "Bucket" b ON b.id = f."bucketId"
+        LEFT JOIN "User" u ON u.id = f."createdBy"
+        WHERE ${whereClause}
+        ORDER BY rank DESC, f."createdAt" DESC
+        LIMIT ${limit} OFFSET ${skip}
+      `;
+    } else {
+      // ── Non-search path: use Prisma ORM (efficient, typed) ──────────────
+      const where: any = {
+        tenantId,
+        isFolder: false,
+      };
+
+      if (bucketId) where.bucketId = bucketId;
+      if (createdBy) where.createdBy = createdBy;
+
+      if (typeConditions.length > 0) {
+        where.OR = typeConditions;
+      }
+
+      const [countResult, dbFiles] = await Promise.all([
+        prisma.fileObject.count({ where }),
+        prisma.fileObject.findMany({
+          where,
+          orderBy: { createdAt: "desc" },
+          include: {
+            bucket: { select: { name: true } },
+            createdByUser: { select: { name: true, email: true } },
+          },
+          skip,
+          take: limit,
+        }),
+      ]);
+
+      total = countResult;
+      files = dbFiles.map((f) => ({
+        ...f,
+        bucketName: f.bucket.name,
+        ownerName: f.createdByUser?.name,
+        ownerEmail: f.createdByUser?.email,
+      }));
+    }
+
+    // ── Map to response shape ──────────────────────────────────────────────
     const fileItems = files.map((f) => {
-      // Determine type for icons
       let type = "other";
-      const lowerName = f.name.toLowerCase();
-      if (f.mimeType?.includes("image")) type = "image";
-      else if (f.mimeType?.includes("pdf") || lowerName.endsWith(".pdf"))
-        type = "pdf";
-      else if (f.mimeType?.includes("video")) type = "video";
-      else if (f.mimeType?.includes("audio")) type = "audio";
+      const lowerName = (f.name as string).toLowerCase();
+      const mime = (f.mimeType as string | null) ?? "";
+
+      if (mime.includes("image")) type = "image";
+      else if (mime.includes("pdf") || lowerName.endsWith(".pdf")) type = "pdf";
+      else if (mime.includes("video")) type = "video";
+      else if (mime.includes("audio")) type = "audio";
       else if (
         lowerName.endsWith(".docx") ||
         lowerName.endsWith(".doc") ||
@@ -184,12 +284,13 @@ export async function GET(request: NextRequest) {
         key: f.key,
         type,
         size: f.size || 0,
-        // Using createdAt as requested for sorting by "latest one first",
-        // but supplying it as modifiedAt to match existing frontend mock types if necessary
-        modifiedAt: f.createdAt.toISOString(),
-        owner: f.createdByUser?.name || f.createdByUser?.email || "Unknown",
+        modifiedAt: (f.createdAt instanceof Date
+          ? f.createdAt
+          : new Date(f.createdAt as string)
+        ).toISOString(),
+        owner: f.ownerName || f.ownerEmail || "Unknown",
         ownerId: f.createdBy,
-        bucketName: f.bucket.name,
+        bucketName: f.bucketName,
         bucketId: f.bucketId,
         tenantId: f.tenantId,
       };
