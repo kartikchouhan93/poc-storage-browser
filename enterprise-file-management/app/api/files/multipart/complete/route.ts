@@ -18,7 +18,13 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -111,7 +117,7 @@ export async function POST(request: NextRequest) {
       resource: "FileObject",
       resourceId: fileRecord.id,
       status: "SUCCESS",
-      details: { bucketId: bucket.id, key, size }
+      details: { bucketId: bucket.id, key, size },
     });
 
     return NextResponse.json({ status: "success", file: fileRecord });

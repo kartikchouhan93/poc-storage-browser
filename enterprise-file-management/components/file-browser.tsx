@@ -171,7 +171,7 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
 
   // Permission Check
   // We can check permissions on a per-file basis using the file's bucketId
-  const canPerform = React.useCallback((action: 'READ' | 'WRITE' | 'DELETE' | 'LIST', fileBucketId?: string) => {
+  const canPerform = React.useCallback((action: 'READ' | 'WRITE' | 'DELETE' | 'LIST' | 'CREATE' | 'UPDATE' | 'DOWNLOAD' | 'SHARE', fileBucketId?: string) => {
      const resourceId = fileBucketId || bucketId || undefined;
      return can(action, { resourceType: 'bucket', resourceId });
   }, [can, bucketId]);
@@ -355,47 +355,68 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
     }
   }
 
-  const FileContextMenu = ({ file }: { file: any }) => (
-    <DropdownMenu>
-      <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon" className="h-8 w-8">
-          <MoreHorizontal className="h-4 w-4" />
-          <span className="sr-only">Actions</span>
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end">
-        <DropdownMenuItem onClick={() => handleAction("Download", file)}>
-          <Download className="mr-2 h-4 w-4" />
-          Download
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleAction("Copy link", file)}>
-          <Copy className="mr-2 h-4 w-4" />
-          Copy Link
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleAction("Share", file)}>
-          <Users className="mr-2 h-4 w-4" />
-          Share
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem onClick={() => handleAction("Rename", file)}>
-          <Pencil className="mr-2 h-4 w-4" />
-          Rename
-        </DropdownMenuItem>
-        <DropdownMenuItem onClick={() => handleAction("Move", file)}>
-          <Move className="mr-2 h-4 w-4" />
-          Move
-        </DropdownMenuItem>
-        <DropdownMenuSeparator />
-        <DropdownMenuItem
-          onClick={() => handleAction("Delete", file)}
-          className="text-destructive focus:bg-destructive/10 focus:text-destructive"
-        >
-          <Trash2 className="mr-2 h-4 w-4" />
-          Delete
-        </DropdownMenuItem>
-      </DropdownMenuContent>
-    </DropdownMenu>
-  )
+  const FileContextMenu = ({ file }: { file: any }) => {
+    const fileBucketId = file.bucketId || bucketId || undefined;
+    const canDownload = canPerform("DOWNLOAD", fileBucketId);
+    const canShare = canPerform("SHARE", fileBucketId);
+    const canWrite = canPerform("WRITE", fileBucketId);
+    const canDelete = canPerform("DELETE", fileBucketId);
+    const canRead = canPerform("READ", fileBucketId);
+
+    return (
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button variant="ghost" size="icon" className="h-8 w-8 focus-visible:ring-0 focus-visible:ring-offset-0">
+            <MoreHorizontal className="h-4 w-4" />
+            <span className="sr-only">Actions</span>
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end">
+          {canDownload && (
+            <DropdownMenuItem onClick={() => handleAction("Download", file)}>
+              <Download className="mr-2 h-4 w-4" />
+              Download
+            </DropdownMenuItem>
+          )}
+          {canRead && (
+            <DropdownMenuItem onClick={() => handleAction("Copy link", file)}>
+              <Copy className="mr-2 h-4 w-4" />
+              Copy Link
+            </DropdownMenuItem>
+          )}
+          {canShare && (
+            <DropdownMenuItem onClick={() => handleAction("Share", file)}>
+              <Users className="mr-2 h-4 w-4" />
+              Share
+            </DropdownMenuItem>
+          )}
+          {(canDownload || canRead || canShare) && canWrite && <DropdownMenuSeparator />}
+          {canWrite && (
+            <>
+              <DropdownMenuItem onClick={() => handleAction("Rename", file)}>
+                <Pencil className="mr-2 h-4 w-4" />
+                Rename
+              </DropdownMenuItem>
+              <DropdownMenuItem onClick={() => handleAction("Move", file)}>
+                <Move className="mr-2 h-4 w-4" />
+                Move
+              </DropdownMenuItem>
+            </>
+          )}
+          {canWrite && canDelete && <DropdownMenuSeparator />}
+          {canDelete && (
+            <DropdownMenuItem
+              onClick={() => handleAction("Delete", file)}
+              className="text-destructive focus:bg-destructive/10 focus:text-destructive"
+            >
+              <Trash2 className="mr-2 h-4 w-4" />
+              Delete
+            </DropdownMenuItem>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    );
+  };
 
   return (
     <div className="space-y-4">
@@ -535,8 +556,8 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
       {loading && <div className="text-center py-10">Loading files...</div>}
 
       {!loading && viewMode === "list" && (
-        <div className="rounded-lg border overflow-hidden">
-          <Table>
+        <div className="rounded-lg border w-full">
+          <Table className="table-fixed w-full">
             <TableHeader>
               <TableRow className="hover:bg-transparent">
                 <TableHead className="w-10">
@@ -549,7 +570,7 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
                     aria-label="Select all"
                   />
                 </TableHead>
-                <TableHead>Name</TableHead>
+                <TableHead className="w-[40%]">Name</TableHead>
                 <TableHead className="hidden md:table-cell">Size</TableHead>
                 <TableHead className="hidden lg:table-cell">
                   Modified
@@ -580,25 +601,25 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
                         aria-label={`Select ${file.name}`}
                       />
                     </TableCell>
-                    <TableCell>
-                      <div className="flex items-center gap-2.5 w-full text-left min-w-0">
-                        <Icon className={`h-4 w-4 shrink-0 ${color}`} />
+                    <TableCell className="align-top">
+                      <div className="flex items-start gap-2.5">
+                        <Icon className={`h-4 w-4 shrink-0 ${color} mt-0.5`} />
                         <span
-                          className="text-sm font-medium truncate shrink"
+                          className="text-sm font-medium break-all leading-snug"
                           title={file.name}
                         >
                           {file.name}
                         </span>
                         {searchQuery && file.path && (
                           <span
-                            className="text-xs text-muted-foreground truncate shrink max-w-[200px] ml-2"
+                            className="text-xs text-muted-foreground break-all leading-snug ml-2 shrink-0 max-w-[200px]"
                             title={file.path}
                           >
                             {file.path}
                           </span>
                         )}
                         {file.starred && (
-                          <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0" />
+                          <Star className="h-3 w-3 fill-amber-400 text-amber-400 shrink-0 mt-0.5" />
                         )}
                         {file.shared && (
                           <Badge
@@ -610,16 +631,16 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
                         )}
                       </div>
                     </TableCell>
-                    <TableCell className="hidden md:table-cell text-muted-foreground text-sm">
+                    <TableCell className="hidden md:table-cell text-muted-foreground text-sm align-top whitespace-nowrap">
                       {file.type === "folder" ? "--" : formatBytes(file.size)}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-muted-foreground text-sm">
+                    <TableCell className="hidden lg:table-cell text-muted-foreground text-sm align-top whitespace-nowrap">
                       {formatDate(file.modifiedAt)}
                     </TableCell>
-                    <TableCell className="hidden lg:table-cell text-muted-foreground text-sm">
+                    <TableCell className="hidden lg:table-cell text-muted-foreground text-sm align-top break-words">
                       {file.owner}
                     </TableCell>
-                    <TableCell onClick={(e) => e.stopPropagation()}>
+                    <TableCell onClick={(e) => e.stopPropagation()} className="pr-4 text-right">
                       <FileContextMenu file={file} />
                     </TableCell>
                   </TableRow>

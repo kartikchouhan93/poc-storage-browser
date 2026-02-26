@@ -38,42 +38,12 @@ import {
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Badge } from "@/components/ui/badge"
-import {
-  mockBuckets,
-  mockCostData,
-  formatBytes,
-  formatDateTime,
-} from "@/lib/mock-data"
+import { Skeleton } from "@/components/ui/skeleton"
+import { formatBytes, formatDateTime } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
-import { getAuditLogs } from "@/app/actions/audit"
+import { getAuditLogs, getDashboardStats, type DashboardStats } from "@/app/actions/audit"
 import { useEffect, useState } from "react"
-
-const stats = [
-  {
-    title: "Total Files",
-    value: "196,430",
-    change: "+2,340 this month",
-    icon: FolderOpen,
-  },
-  {
-    title: "Total Storage",
-    value: "1.23 TB",
-    change: "71% of quota",
-    icon: HardDrive,
-  },
-  {
-    title: "Active Buckets",
-    value: "6",
-    change: "1 new this month",
-    icon: Archive,
-  },
-  {
-    title: "Monthly Cost",
-    value: "$3,250",
-    change: "+7.6% from last month",
-    icon: CreditCard,
-  },
-]
+import { useAuth } from "@/components/providers/AuthProvider"
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -85,24 +55,72 @@ const actionIcons: Record<string, React.ElementType> = {
   view: Eye,
 }
 
-const storageByBucket = mockBuckets.map((b) => ({
-  name: b.name,
-  size: b.totalSize / 1_000_000_000,
-}))
-
-import { useAuth } from "@/components/providers/AuthProvider"
-
 export default function OverviewPage() {
   const { user } = useAuth()
   const [recentLogs, setRecentLogs] = useState<any[]>([])
+  const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
+  const [statsLoading, setStatsLoading] = useState(true)
 
   useEffect(() => {
-    getAuditLogs().then(res => {
+    getAuditLogs().then((res) => {
       if (res.success && res.data) {
-        setRecentLogs(res.data.slice(0, 6));
+        setRecentLogs(res.data.slice(0, 6))
       }
-    });
-  }, []);
+    })
+
+    getDashboardStats().then((res) => {
+      if (res.success) {
+        setDashboardStats(res.data)
+      }
+      setStatsLoading(false)
+    })
+  }, [])
+
+  // Derive stat cards from real data
+  const stats = [
+    {
+      title: "Total Files",
+      value: statsLoading
+        ? null
+        : dashboardStats
+        ? dashboardStats.totalFiles.toLocaleString()
+        : "—",
+      change: dashboardStats ? `${formatBytes(dashboardStats.totalStorageBytes)} across all buckets` : "",
+      icon: FolderOpen,
+    },
+    {
+      title: "Total Storage",
+      value: statsLoading
+        ? null
+        : dashboardStats
+        ? formatBytes(dashboardStats.totalStorageBytes)
+        : "—",
+      change: dashboardStats
+        ? `${dashboardStats.activeBuckets} bucket${dashboardStats.activeBuckets !== 1 ? "s" : ""}`
+        : "",
+      icon: HardDrive,
+    },
+    {
+      title: "Active Buckets",
+      value: statsLoading
+        ? null
+        : dashboardStats
+        ? String(dashboardStats.activeBuckets)
+        : "—",
+      change: "",
+      icon: Archive,
+    },
+    {
+      title: "Monthly Cost",
+      value: statsLoading
+        ? null
+        : dashboardStats
+        ? `$${dashboardStats.monthlyCostUsd.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+        : "—",
+      change: "Estimated at $0.023/GB",
+      icon: CreditCard,
+    },
+  ]
 
   return (
     <>
@@ -139,12 +157,23 @@ export default function OverviewPage() {
                   <stat.icon className="h-4 w-4 text-muted-foreground" />
                 </CardHeader>
                 <CardContent>
-                  <div className="text-2xl font-semibold tracking-tight">
-                    {stat.value}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    {stat.change}
-                  </p>
+                  {stat.value === null ? (
+                    <>
+                      <Skeleton className="h-7 w-24 mb-2" />
+                      <Skeleton className="h-3 w-32" />
+                    </>
+                  ) : (
+                    <>
+                      <div className="text-2xl font-semibold tracking-tight">
+                        {stat.value}
+                      </div>
+                      {stat.change && (
+                        <p className="text-xs text-muted-foreground mt-1">
+                          {stat.change}
+                        </p>
+                      )}
+                    </>
+                  )}
                 </CardContent>
               </Card>
             ))}
@@ -167,66 +196,78 @@ export default function OverviewPage() {
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <AreaChart data={mockCostData}>
-                      <defs>
-                        <linearGradient
-                          id="colorTotal"
-                          x1="0"
-                          y1="0"
-                          x2="0"
-                          y2="1"
-                        >
-                          <stop
-                            offset="5%"
-                            stopColor="var(--color-primary)"
-                            stopOpacity={0.2}
-                          />
-                          <stop
-                            offset="95%"
-                            stopColor="var(--color-primary)"
-                            stopOpacity={0}
-                          />
-                        </linearGradient>
-                      </defs>
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="var(--color-border)"
-                        vertical={false}
-                      />
-                      <XAxis
-                        dataKey="month"
-                        fontSize={12}
-                        tickLine={false}
-                        axisLine={false}
-                        stroke="var(--color-muted-foreground)"
-                      />
-                      <YAxis
-                        fontSize={12}
-                        tickLine={false}
-                        axisLine={false}
-                        stroke="var(--color-muted-foreground)"
-                        tickFormatter={(value) => `$${value}`}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "var(--color-popover)",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: "var(--radius-md)",
-                          color: "var(--color-popover-foreground)",
-                          fontSize: 12,
-                        }}
-                        formatter={(value: number) => [`$${value}`, "Total"]}
-                      />
-                      <Area
-                        type="monotone"
-                        dataKey="total"
-                        stroke="var(--color-primary)"
-                        strokeWidth={2}
-                        fill="url(#colorTotal)"
-                      />
-                    </AreaChart>
-                  </ResponsiveContainer>
+                  {statsLoading ? (
+                    <div className="flex h-full items-end gap-2 pb-4">
+                      {Array.from({ length: 6 }).map((_, i) => (
+                        <Skeleton
+                          key={i}
+                          className="flex-1 rounded"
+                          style={{ height: `${40 + i * 12}%` }}
+                        />
+                      ))}
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <AreaChart data={dashboardStats?.costTrend ?? []}>
+                        <defs>
+                          <linearGradient
+                            id="colorTotal"
+                            x1="0"
+                            y1="0"
+                            x2="0"
+                            y2="1"
+                          >
+                            <stop
+                              offset="5%"
+                              stopColor="var(--color-primary)"
+                              stopOpacity={0.2}
+                            />
+                            <stop
+                              offset="95%"
+                              stopColor="var(--color-primary)"
+                              stopOpacity={0}
+                            />
+                          </linearGradient>
+                        </defs>
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="var(--color-border)"
+                          vertical={false}
+                        />
+                        <XAxis
+                          dataKey="month"
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--color-muted-foreground)"
+                        />
+                        <YAxis
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--color-muted-foreground)"
+                          tickFormatter={(value) => `$${value}`}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "var(--color-popover)",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: "var(--radius-md)",
+                            color: "var(--color-popover-foreground)",
+                            fontSize: 12,
+                          }}
+                          formatter={(value: number) => [`$${value}`, "Est. Cost"]}
+                        />
+                        <Area
+                          type="monotone"
+                          dataKey="total"
+                          stroke="var(--color-primary)"
+                          strokeWidth={2}
+                          fill="url(#colorTotal)"
+                        />
+                      </AreaChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -246,51 +287,65 @@ export default function OverviewPage() {
               </CardHeader>
               <CardContent>
                 <div className="h-[240px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={storageByBucket} layout="vertical">
-                      <CartesianGrid
-                        strokeDasharray="3 3"
-                        stroke="var(--color-border)"
-                        horizontal={false}
-                      />
-                      <XAxis
-                        type="number"
-                        fontSize={12}
-                        tickLine={false}
-                        axisLine={false}
-                        stroke="var(--color-muted-foreground)"
-                        tickFormatter={(value) => `${value} GB`}
-                      />
-                      <YAxis
-                        type="category"
-                        dataKey="name"
-                        fontSize={11}
-                        tickLine={false}
-                        axisLine={false}
-                        stroke="var(--color-muted-foreground)"
-                        width={100}
-                      />
-                      <Tooltip
-                        contentStyle={{
-                          backgroundColor: "var(--color-popover)",
-                          border: "1px solid var(--color-border)",
-                          borderRadius: "var(--radius-md)",
-                          color: "var(--color-popover-foreground)",
-                          fontSize: 12,
-                        }}
-                        formatter={(value: number) => [
-                          `${value.toFixed(1)} GB`,
-                          "Size",
-                        ]}
-                      />
-                      <Bar
-                        dataKey="size"
-                        fill="var(--color-primary)"
-                        radius={[0, 4, 4, 0]}
-                        barSize={18}
-                      />
-                    </BarChart>
-                  </ResponsiveContainer>
+                  {statsLoading ? (
+                    <div className="flex flex-col justify-end gap-2 h-full pb-4">
+                      {Array.from({ length: 5 }).map((_, i) => (
+                        <div key={i} className="flex items-center gap-2">
+                          <Skeleton className="h-3 w-20" />
+                          <Skeleton className="h-4 flex-1" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <ResponsiveContainer width="100%" height="100%">
+                      <BarChart
+                        data={dashboardStats?.storageByBucket ?? []}
+                        layout="vertical"
+                      >
+                        <CartesianGrid
+                          strokeDasharray="3 3"
+                          stroke="var(--color-border)"
+                          horizontal={false}
+                        />
+                        <XAxis
+                          type="number"
+                          fontSize={12}
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--color-muted-foreground)"
+                          tickFormatter={(value) => `${value} GB`}
+                        />
+                        <YAxis
+                          type="category"
+                          dataKey="name"
+                          fontSize={11}
+                          tickLine={false}
+                          axisLine={false}
+                          stroke="var(--color-muted-foreground)"
+                          width={100}
+                        />
+                        <Tooltip
+                          contentStyle={{
+                            backgroundColor: "var(--color-popover)",
+                            border: "1px solid var(--color-border)",
+                            borderRadius: "var(--radius-md)",
+                            color: "var(--color-popover-foreground)",
+                            fontSize: 12,
+                          }}
+                          formatter={(value: number) => [
+                            `${value.toFixed(3)} GB`,
+                            "Size",
+                          ]}
+                        />
+                        <Bar
+                          dataKey="sizeGb"
+                          fill="var(--color-primary)"
+                          radius={[0, 4, 4, 0]}
+                          barSize={18}
+                        />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  )}
                 </div>
               </CardContent>
             </Card>
@@ -361,18 +416,23 @@ export default function OverviewPage() {
               <CardContent>
                 <div className="space-y-4">
                   {recentLogs.map((log) => {
-                    let iconKey = "view";
-                    const action = log.action.toLowerCase() || "";
-                    if (action.includes("upload")) iconKey = "upload";
-                    else if (action.includes("download")) iconKey = "download";
-                    else if (action.includes("delete") || action.includes("remove")) iconKey = "delete";
-                    else if (action.includes("share") || action.includes("permission")) iconKey = "share";
-                    else if (action.includes("create")) iconKey = "create_bucket";
-                    
+                    let iconKey = "view"
+                    const action = log.action.toLowerCase() || ""
+                    if (action.includes("upload")) iconKey = "upload"
+                    else if (action.includes("download")) iconKey = "download"
+                    else if (action.includes("delete") || action.includes("remove")) iconKey = "delete"
+                    else if (action.includes("share") || action.includes("permission")) iconKey = "share"
+                    else if (action.includes("create")) iconKey = "create_bucket"
+
                     const Icon = actionIcons[iconKey] || Eye
-                    const details = log.details || {};
-                    const displayResource = details.name || details.key || details.email || log.resourceId || log.resource;
-                    
+                    const details = log.details || {}
+                    const displayResource =
+                      details.name ||
+                      details.key ||
+                      details.email ||
+                      log.resourceId ||
+                      log.resource
+
                     return (
                       <div key={log.id} className="flex items-start gap-3">
                         <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-secondary">
@@ -391,7 +451,8 @@ export default function OverviewPage() {
                             </Badge>
                           </div>
                           <p className="text-xs text-muted-foreground truncate">
-                            {displayResource} {details.bucketName ? `in ${details.bucketName}` : ''}
+                            {displayResource}{" "}
+                            {details.bucketName ? `in ${details.bucketName}` : ""}
                           </p>
                         </div>
                         <span className="text-xs text-muted-foreground whitespace-nowrap">
@@ -401,7 +462,9 @@ export default function OverviewPage() {
                     )
                   })}
                   {recentLogs.length === 0 && (
-                    <div className="text-sm text-muted-foreground text-center py-4">No recent activity</div>
+                    <div className="text-sm text-muted-foreground text-center py-4">
+                      No recent activity
+                    </div>
                   )}
                 </div>
               </CardContent>

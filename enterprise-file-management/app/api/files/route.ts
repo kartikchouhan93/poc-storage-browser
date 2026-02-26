@@ -6,6 +6,7 @@ import { decrypt } from "@/lib/encryption";
 import { verifyToken } from "@/lib/token";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
+import { checkPermission } from "@/lib/rbac";
 
 export async function GET(request: NextRequest) {
   try {
@@ -101,7 +102,13 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -128,6 +135,16 @@ export async function POST(request: NextRequest) {
         { error: "Bucket or associated account not found" },
         { status: 404 },
       );
+    }
+
+    const hasAccess = await checkPermission(user, "WRITE", {
+      tenantId: bucket.tenantId,
+      resourceType: "bucket",
+      resourceId: bucket.id,
+    });
+
+    if (!hasAccess) {
+      return NextResponse.json({ error: "Forbidden" }, { status: 403 });
     }
 
     const account = bucket.account;
@@ -206,16 +223,16 @@ export async function POST(request: NextRequest) {
           updatedBy: user.id,
         },
       });
-      
+
       if (isFolder) {
-          logAudit({
-              userId: user.id,
-              action: "FOLDER_CREATE",
-              resource: "FileObject",
-              resourceId: file.id,
-              status: "SUCCESS",
-              details: { name, bucketId, key }
-          });
+        logAudit({
+          userId: user.id,
+          action: "FOLDER_CREATE",
+          resource: "FileObject",
+          resourceId: file.id,
+          status: "SUCCESS",
+          details: { name, bucketId, key },
+        });
       }
     }
 

@@ -84,9 +84,21 @@ const tenantNavGroups = [
   }
 ];
 
-export function AppSidebar() {
+interface SidebarUser {
+  id: string;
+  email: string;
+  name: string;
+  role: string;
+  tenantId: string;
+  tenantName?: string;
+}
+
+export function AppSidebar({ serverUser }: { serverUser?: SidebarUser }) {
   const pathname = usePathname();
-  const { user, logout } = useAuth();
+  const { user: contextUser, logout, loading } = useAuth();
+
+  // Use server-provided user (available immediately on render) or fall back to client context
+  const user = serverUser ?? contextUser;
 
   let navGroups = tenantNavGroups;
   if (user?.role === "PLATFORM_ADMIN") {
@@ -106,6 +118,29 @@ export function AppSidebar() {
     });
   }
 
+  // Show skeleton only when no server user was provided and client context is still loading
+  if (!serverUser && (loading || !user)) {
+    return (
+      <Sidebar variant="inset">
+        <SidebarHeader>
+          <div className="h-10 w-full rounded-md bg-muted/40 animate-pulse" />
+        </SidebarHeader>
+        <SidebarContent>
+          <SidebarGroup>
+            <SidebarGroupContent>
+              <div className="space-y-2 px-2 mt-2">
+                {[...Array(5)].map((_, i) => (
+                  <div key={i} className="h-8 w-full rounded-md bg-muted/40 animate-pulse" />
+                ))}
+              </div>
+            </SidebarGroupContent>
+          </SidebarGroup>
+        </SidebarContent>
+      </Sidebar>
+    );
+  }
+
+  // At this point user is guaranteed non-null (either from serverUser prop or contextUser)
   if (!user) return null;
 
   return (

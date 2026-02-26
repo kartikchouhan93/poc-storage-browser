@@ -18,7 +18,13 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -80,7 +86,7 @@ export async function POST(request: NextRequest) {
       action: "MULTIPART_UPLOAD_INITIATED",
       resource: "FileObject",
       status: "SUCCESS",
-      details: { bucketId: bucket.id, key }
+      details: { bucketId: bucket.id, key },
     });
 
     return NextResponse.json({ uploadId: UploadId, key });

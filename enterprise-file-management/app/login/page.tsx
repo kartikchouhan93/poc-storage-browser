@@ -6,8 +6,10 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
+import { useAuth } from '@/components/providers/AuthProvider';
 
 export default function LoginPage() {
+    const { login } = useAuth();
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
     const [newPassword, setNewPassword] = React.useState('');
@@ -34,20 +36,19 @@ export default function LoginPage() {
                 if (res.ok) {
                     // Hydrate AuthProvider so AppSidebar gets the user
                     if (data.accessToken) {
-                        localStorage.setItem('accessToken', data.accessToken);
-                        localStorage.setItem('user', JSON.stringify({
+                        const userData = {
                             id: data.id || '',
                             email,
                             name: data.name || email.split('@')[0],
                             role: data.role,
                             tenantId: data.tenantId || '',
                             tenantName: data.tenantName || '',
-                        }));
-                    }
-                    if (data.role === 'PLATFORM_ADMIN') {
-                        router.push('/superadmin');
+                            policies: data.policies || [],
+                            teams: data.teams || [],
+                        };
+                        login(data.accessToken, userData, data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
                     } else {
-                        router.push('/');
+                        router.push(data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
                     }
                 } else {
                     setError(data.error || 'Failed to update password');
@@ -67,20 +68,19 @@ export default function LoginPage() {
                     } else {
                         // Hydrate AuthProvider so AppSidebar gets the user
                         if (data.accessToken) {
-                            localStorage.setItem('accessToken', data.accessToken);
-                            localStorage.setItem('user', JSON.stringify({
+                            const userData = {
                                 id: data.id || '',
                                 email,
                                 name: data.name || email.split('@')[0],
                                 role: data.role,
                                 tenantId: data.tenantId || '',
                                 tenantName: data.tenantName || '',
-                            }));
-                        }
-                        if (data.role === 'PLATFORM_ADMIN') {
-                            router.push('/superadmin');
+                                policies: data.policies || [],
+                                teams: data.teams || [],
+                            };
+                            login(data.accessToken, userData, data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
                         } else {
-                            router.push('/');
+                            router.push(data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
                         }
                     }
                 } else {

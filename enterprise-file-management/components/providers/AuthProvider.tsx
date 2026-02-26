@@ -1,7 +1,7 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { jwtDecode } from 'jwt-decode';
 
@@ -18,7 +18,7 @@ interface User {
 
 interface AuthContextType {
     user: User | null;
-    login: (token: string, userData: User) => void;
+    login: (token: string, userData: User, redirectPath?: string) => void;
     logout: () => void;
     loading: boolean;
 }
@@ -34,6 +34,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
     const router = useRouter();
+    const pendingRedirect = useRef<string | null>(null);
 
     const logout = useCallback(async () => {
         // Clear server-side httpOnly cookies
@@ -72,7 +73,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     const isExpired = decoded.exp * 1000 < Date.now();
 
                     if (!isExpired) {
-                        setUser(JSON.parse(storedUser));
+                        const parsedUser = JSON.parse(storedUser);
+                        setUser(parsedUser);
+
+                        // Silently refresh user data (including new policies/teams) in background
+                        fetch('/api/auth/me')
+                            .then(res => res.ok ? res.json() : null)
+                            .then(data => {
+                                if (data && data.email) {
+                                    setUser(data);
+                                    localStorage.setItem('user', JSON.stringify(data));
+                                }
+                            })
+                            .catch(() => {});
 
                         // Schedule a proactive refresh ~1 minute before expiry
                         const msUntilExpiry = decoded.exp * 1000 - Date.now();
@@ -129,13 +142,23 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
-    const login = (token: string, userData: User) => {
+    // Navigate only AFTER user state is committed to React — avoids sidebar flash
+    useEffect(() => {
+        if (user && pendingRedirect.current) {
+            const path = pendingRedirect.current;
+            pendingRedirect.current = null;
+            router.push(path);
+        }
+    }, [user, router]);
+
+    const login = (token: string, userData: User, redirectPath: string = '/') => {
         // Store token client-side for JWT decode / expiry checks
         localStorage.setItem('accessToken', token);
         localStorage.setItem('user', JSON.stringify(userData));
+        // Set user first, then navigate after React commits the state update
+        pendingRedirect.current = redirectPath;
         setUser(userData);
         // Note: the login API already set accessToken + refreshToken as httpOnly cookies
-        router.push('/');
     };
 
     return (

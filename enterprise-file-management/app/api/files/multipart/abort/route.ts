@@ -17,7 +17,13 @@ export async function POST(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -52,14 +58,8 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
-    const s3ClientConfig: any = { region: bucket.region };
-    if (account.awsAccessKeyId && account.awsSecretAccessKey) {
-      s3ClientConfig.credentials = {
-        accessKeyId: decrypt(account.awsAccessKeyId),
-        secretAccessKey: decrypt(account.awsSecretAccessKey),
-      };
-    }
-    const s3 = new S3Client(s3ClientConfig);
+    const { getS3Client } = await import("@/lib/s3");
+    const s3 = getS3Client(account, bucket.region);
 
     const command = new AbortMultipartUploadCommand({
       Bucket: bucket.name,

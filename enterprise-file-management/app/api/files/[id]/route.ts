@@ -29,7 +29,13 @@ export async function DELETE(
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -115,7 +121,7 @@ export async function DELETE(
       resource: "FileObject",
       resourceId: file.id,
       status: "SUCCESS",
-      details: { bucketId: file.bucket.id, key: file.key }
+      details: { bucketId: file.bucket.id, key: file.key },
     });
 
     return NextResponse.json({ success: true });
@@ -143,7 +149,13 @@ export async function PATCH(
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)

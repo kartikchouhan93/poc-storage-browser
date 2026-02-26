@@ -43,6 +43,8 @@ import { mockCostData, formatDateTime } from "@/lib/mock-data";
 import { SearchCommandDialog } from "@/components/search-command";
 import { getAuditLogs } from "@/app/actions/audit";
 import { AuditLog } from "@/lib/generated/prisma/client";
+import { AuditFilters } from "@/components/audit/audit-filters";
+import { ExportCsvButton } from "@/components/audit/export-csv-button";
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -70,13 +72,14 @@ const actionColors: Record<string, string> = {
 
 const latestCost = mockCostData[mockCostData.length - 1];
 
-export default async function AuditPage() {
-  // We can eventually move actionFilter to a URL search parameter to make this fully SSR-friendly with filters
-  // For now, replacing the client-side state with server-fetched data. The filter tab will still be there but
-  // currently we'll just display all logs for MVP, or we can use a client component wrapper.
-  // To keep it simple, we'll fetch all logs up front.
+export default async function AuditPage(props: {
+  searchParams?: Promise<{ [key: string]: string | string[] | undefined }>;
+}) {
+  const searchParams = props.searchParams ? await props.searchParams : {};
+  const action = typeof searchParams.action === 'string' ? searchParams.action : undefined;
+  const timeRange = typeof searchParams.timeRange === 'string' ? searchParams.timeRange : undefined;
 
-  const result = await getAuditLogs();
+  const result = await getAuditLogs({ action, timeRange });
   const logs = result.success ? (result.data as any[]) : [];
 
   return (
@@ -108,21 +111,8 @@ export default async function AuditPage() {
 
      
               <div className="flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-2">
-                  {/* Filter disabled temporarily while moving to SSR logs */}
-                  <Select defaultValue="all" disabled>
-                    <SelectTrigger className="w-[160px] h-8 text-xs">
-                      <SelectValue placeholder="Filter by action" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="all">All Actions</SelectItem>
-                    </SelectContent>
-                  </Select>
-                </div>
-                <Button variant="outline" size="sm" className="gap-1.5">
-                  <ArrowDownToLine className="h-4 w-4" />
-                  Export CSV
-                </Button>
+                <AuditFilters />
+                <ExportCsvButton logs={logs} />
               </div>
 
               <div className="rounded-lg border overflow-hidden">

@@ -20,7 +20,13 @@ export async function GET(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { policies: true },
+      include: {
+        policies: true,
+        teams: {
+          where: { isDeleted: false },
+          include: { team: { include: { policies: true } } },
+        },
+      },
     });
 
     if (!user)
@@ -51,7 +57,12 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
     // Determine required permission based on action
-    const requiredPermission = action === "download" ? "READ" : "WRITE";
+    let requiredPermission: "READ" | "WRITE" | "DOWNLOAD" = "WRITE";
+    if (action === "download") {
+      requiredPermission = "DOWNLOAD";
+    } else if (action === "read") {
+      requiredPermission = "READ";
+    }
 
     // Check Permission
     const hasAccess = await checkPermission(user, requiredPermission, {
@@ -103,16 +114,21 @@ export async function GET(request: NextRequest) {
     }
 
     const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
-    
+
     // Log audit asynchronously
     logAudit({
       userId: user.id,
-      action: action === "download" ? "FILE_DOWNLOAD" : action === "read" ? "FILE_READ" : "FILE_UPLOAD_INITIATED",
+      action:
+        action === "download"
+          ? "FILE_DOWNLOAD"
+          : action === "read"
+            ? "FILE_READ"
+            : "FILE_UPLOAD_INITIATED",
       resource: "FileObject",
       status: "SUCCESS",
-      details: { bucketId: bucket.id, key, action }
+      details: { bucketId: bucket.id, key, action },
     });
-    
+
     return NextResponse.json({ url, key });
   } catch (error) {
     console.error("Presigned URL error:", error);

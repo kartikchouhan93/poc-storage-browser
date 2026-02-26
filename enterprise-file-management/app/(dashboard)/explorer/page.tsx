@@ -305,11 +305,11 @@ export default function ExplorerPage() {
             </p>
 
             {files.length > 0 ? (
-              <div className="rounded-lg border overflow-hidden">
-                <Table>
+              <div className="rounded-lg border overflow-hidden w-full">
+                <Table className="table-fixed w-full">
                   <TableHeader>
                     <TableRow className="hover:bg-transparent">
-                      <TableHead>Name</TableHead>
+                      <TableHead className="w-[40%]">Name</TableHead>
                       <TableHead className="hidden md:table-cell">
                         Bucket
                       </TableHead>
@@ -336,24 +336,27 @@ export default function ExplorerPage() {
                             setViewerOpen(true)
                           }}
                         >
-                          <TableCell>
-                            <div className="flex items-center gap-2.5">
-                              <Icon className="h-4 w-4 text-muted-foreground shrink-0" />
-                              <span className="text-sm font-medium truncate">
+                          <TableCell className="align-top">
+                            <div className="flex items-start gap-2.5">
+                              <Icon className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
+                              <span
+                                className="text-sm font-medium break-all leading-snug"
+                                title={file.name}
+                              >
                                 {file.name}
                               </span>
                             </div>
                           </TableCell>
-                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground">
+                          <TableCell className="hidden md:table-cell text-sm text-muted-foreground align-top break-words">
                             {file.bucketName}
                           </TableCell>
-                          <TableCell className="hidden sm:table-cell text-sm text-muted-foreground">
+                          <TableCell className="hidden sm:table-cell text-sm text-muted-foreground align-top whitespace-nowrap">
                             {formatBytes(file.size)}
                           </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground align-top whitespace-nowrap">
                             {formatDate(file.modifiedAt)}
                           </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground align-top break-words">
                             {file.owner}
                           </TableCell>
                         </TableRow>
