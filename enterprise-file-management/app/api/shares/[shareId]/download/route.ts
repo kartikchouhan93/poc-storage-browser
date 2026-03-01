@@ -15,10 +15,10 @@ const JWT_SECRET = new TextEncoder().encode(
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { shareId: string } },
+  { params }: { params: Promise<{ shareId: string }> | { shareId: string } },
 ) {
   try {
-    const { shareId } = params;
+    const { shareId } = await params;
 
     // 1. Verify Access Session
     const cookieStore = await cookies();
@@ -88,7 +88,47 @@ export async function GET(
       );
     }
 
-    // 4. Update Download Counter
+    // 4. Generate Presigned URL
+    let s3ClientConfig: any = { region: share.bucket.region };
+
+    if (
+      share.bucket.account.awsAccessKeyId &&
+      share.bucket.account.awsSecretAccessKey
+    ) {
+      s3ClientConfig.credentials = {
+        accessKeyId: decrypt(share.bucket.account.awsAccessKeyId),
+        secretAccessKey: decrypt(share.bucket.account.awsSecretAccessKey),
+        ...(share.bucket.account.awsSessionToken && {
+          sessionToken: decrypt(share.bucket.account.awsSessionToken),
+        }),
+      };
+    } else if (
+      process.env.AWS_ACCESS_KEY_ID &&
+      process.env.AWS_SECRET_ACCESS_KEY
+    ) {
+      s3ClientConfig.credentials = {
+        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+        ...(process.env.AWS_SESSION_TOKEN && {
+          sessionToken: process.env.AWS_SESSION_TOKEN,
+        }),
+      };
+    } else if (process.env.AWS_PROFILE) {
+      s3ClientConfig.credentials = fromIni({
+        profile: process.env.AWS_PROFILE,
+      });
+    }
+
+    const s3 = new S3Client(s3ClientConfig);
+    const command = new GetObjectCommand({
+      Bucket: share.bucket.name,
+      Key: share.file.key,
+      ResponseContentDisposition: `attachment; filename="${share.file.name}"`,
+    });
+
+    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
+
+    // 5. Update Download Counter (Only when URL generation succeeds)
     const updatedShare = await prisma.share.update({
       where: { id: share.id },
       data: { downloads: { increment: 1 } },
@@ -101,41 +141,6 @@ export async function GET(
         data: { status: "EXPIRED" },
       });
     }
-
-    // 5. Generate Presigned URL
-    let s3ClientConfig: any = { region: share.bucket.region };
-
-    if (
-      share.bucket.account.awsAccessKeyId &&
-      share.bucket.account.awsSecretAccessKey
-    ) {
-      s3ClientConfig.credentials = {
-        accessKeyId: decrypt(share.bucket.account.awsAccessKeyId),
-        secretAccessKey: decrypt(share.bucket.account.awsSecretAccessKey),
-      };
-    } else if (process.env.AWS_PROFILE) {
-      s3ClientConfig.credentials = fromIni({
-        profile: process.env.AWS_PROFILE,
-      });
-    } else if (
-      process.env.AWS_ACCESS_KEY_ID &&
-      process.env.AWS_SECRET_ACCESS_KEY
-    ) {
-      s3ClientConfig.credentials = {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-        sessionToken: process.env.AWS_SESSION_TOKEN,
-      };
-    }
-
-    const s3 = new S3Client(s3ClientConfig);
-    const command = new GetObjectCommand({
-      Bucket: share.bucket.name,
-      Key: share.file.key,
-      ResponseContentDisposition: `attachment; filename="${share.file.name}"`,
-    });
-
-    const signedUrl = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
     // 6. Audit Logging (Share Download)
     // Note: We might be logging "Anonymous" or "Shared User" since they are not logged in FMS users.

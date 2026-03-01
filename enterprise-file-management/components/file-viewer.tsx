@@ -8,6 +8,7 @@ import { Download, ExternalLink, FileText, Loader2, X } from "lucide-react"
 // Types
 import type { ApiFileItem } from "@/app/(dashboard)/explorer/page"
 import { fetchWithAuth } from "@/lib/api"
+import { useAuth } from "@/components/providers/AuthProvider"
 
 // Doc Viewer for Office formats
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer"
@@ -24,6 +25,30 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
   const [loading, setLoading] = React.useState(false)
   const [error, setError] = React.useState<string | null>(null)
   const [textContent, setTextContent] = React.useState<string | null>(null)
+  
+  const { user } = useAuth()
+
+  const canDownload = React.useMemo(() => {
+    if (!user || !file) return false;
+    if (user.role === 'PLATFORM_ADMIN' || user.role === 'TENANT_ADMIN') return true;
+    
+    let allPolicies: any[] = [];
+    if (user.policies) allPolicies = [...allPolicies, ...user.policies];
+    if (user.teams) {
+      user.teams.forEach((t: any) => {
+         if (t.team && t.team.policies) {
+            allPolicies = [...allPolicies, ...t.team.policies];
+         }
+      });
+    }
+
+    return allPolicies.some(p => {
+      const typeMatch = p.resourceType?.toLowerCase() === 'bucket';
+      const idMatch = p.resourceId === null || p.resourceId === undefined || p.resourceId === file.bucketId;
+      const actionMatch = p.actions?.includes('DOWNLOAD');
+      return typeMatch && idMatch && actionMatch;
+    });
+  }, [user, file]);
 
   React.useEffect(() => {
     if (!open || !file) {
@@ -54,11 +79,13 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
                     const text = await textRes.text()
                     if (isMounted) setTextContent(text)
                 } catch(e) {
+                    console.warn("Silent text fetch failure:", e);
                     // Ignore text fetch errors, fallback to download
                 }
             }
         }
       } catch (err: any) {
+        console.error("DocViewer URL Fetch Error:", err);
         if (isMounted) setError(err.message || 'An error occurred')
       } finally {
         if (isMounted) setLoading(false)
@@ -118,7 +145,7 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
 
     if (type === 'pdf') {
        return (
-         <div className="w-full h-[75vh] rounded-md overflow-hidden border">
+         <div className="w-full h-[75vh] rounded-md overflow-hidden border bg-muted/10 relative">
            <iframe src={`${url}#toolbar=0`} className="w-full h-full" title={name} />
          </div>
        )
@@ -135,7 +162,7 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
     if (type === 'document' || type === 'spreadsheet') {
       // Use react-doc-viewer for Word/Excel
       return (
-          <div className="w-full h-full min-h-[75vh] sm:min-h-[85vh] bg-background">
+          <div className="w-full h-full min-h-[75vh] sm:min-h-[85vh] bg-background flex rounded-md overflow-hidden relative">
               <DocViewer 
                 documents={[{ uri: url, fileType: name.split('.').pop() }]}
                 pluginRenderers={DocViewerRenderers}
@@ -147,7 +174,7 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
                         retainURLParams: false
                     }
                 }}
-                className="doc-viewer-override"
+                className="doc-viewer-override w-full h-full"
               />
           </div>
       )
@@ -160,19 +187,42 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
         <p className="text-sm text-muted-foreground mt-2 mb-6 max-w-sm">
           No rich preview is available for this file type. Download it to view on your device.
         </p>
-        <Button asChild>
-          <a href={url} download={name} target="_blank" rel="noreferrer">
+        {canDownload && (
+          <Button onClick={handleDownload}>
             <Download className="mr-2 h-4 w-4" />
             Download File
-          </a>
-        </Button>
+          </Button>
+        )}
       </div>
     )
   }
 
+  const handleDownload = async (e: React.MouseEvent) => {
+    e.preventDefault();
+    if (!file) return;
+    
+    try {
+      // Calling the API with action=download triggers the audit log on the backend
+      const res = await fetchWithAuth(`/api/files/presigned?bucketId=${file.bucketId}&key=${encodeURIComponent(file.key)}&action=download`);
+      if (!res.ok) throw new Error('Failed to get download url');
+      
+      const data = await res.json();
+      
+      // Trigger actual download in browser
+      const a = document.createElement('a');
+      a.href = data.url;
+      a.download = file.name;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    } catch (err) {
+      console.error("Download failed:", err);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent showCloseButton={false} className="max-w-6xl w-[95vw] h-[95vh] sm:h-[90vh] p-0 overflow-hidden flex flex-col bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60">
+      <DialogContent showCloseButton={false} className={`h-[95vh] sm:h-[90vh] p-0 overflow-hidden flex flex-col bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 ${file?.type === 'document' || file?.type === 'spreadsheet' || file?.type === 'pdf' ? '!max-w-[95vw] !w-[95vw]' : 'max-w-6xl w-[95vw]'}`}>
         <DialogHeader className="p-4 border-b bg-background/80 flex flex-row items-center justify-between shrink-0 z-10">
           <div className="flex items-center gap-3 overflow-hidden">
             <div className="p-2 bg-primary/10 rounded-md shrink-0">
@@ -187,11 +237,9 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
           </div>
           
           <div className="flex items-center gap-1">
-             {url && (
-                <Button variant="ghost" size="icon" className="h-8 w-8" asChild>
-                  <a href={url} download={file?.name} target="_blank" rel="noreferrer" title="Download Source">
-                    <Download className="h-4 w-4" />
-                  </a>
+             {url && canDownload && (
+                <Button variant="ghost" size="icon" className="h-8 w-8" onClick={handleDownload} title="Download Source">
+                  <Download className="h-4 w-4" />
                 </Button>
              )}
             <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => onOpenChange(false)}>
@@ -200,7 +248,7 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
           </div>
         </DialogHeader>
 
-        <div className={`flex-1 overflow-auto ${file?.type === 'document' || file?.type === 'spreadsheet' ? 'bg-background' : 'p-4 md:p-6'}`}>
+        <div className={`flex-1 overflow-auto flex flex-col ${file?.type === 'document' || file?.type === 'spreadsheet' || file?.type === 'pdf' ? 'bg-background p-0' : 'p-4 md:p-6'}`}>
           {renderContent()}
         </div>
       </DialogContent>

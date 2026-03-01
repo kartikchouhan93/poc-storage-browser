@@ -89,7 +89,7 @@ export async function POST(request: NextRequest) {
     // Generate Share URL based on current host
     const protocol = request.headers.get("x-forwarded-proto") || "http";
     const host = request.headers.get("host") || "localhost:3000";
-    const shareUrl = `${protocol}://${host}/app/file/share/${share.id}`;
+    const shareUrl = `${protocol}://${host}/file/share/${share.id}`;
 
     // Send email notification via SNS
     await sendShareEmailNotification({
@@ -129,6 +129,53 @@ export async function POST(request: NextRequest) {
     console.error("Failed to create share:", error);
     return NextResponse.json(
       { error: "Failed to create file share" },
+      { status: 500 },
+    );
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const user = await getCurrentUser();
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const shares = await prisma.share.findMany({
+      where: {
+        createdBy: user.id,
+      },
+      include: {
+        file: {
+          select: {
+            name: true,
+          },
+        },
+      },
+      orderBy: {
+        createdAt: "desc",
+      },
+    });
+
+    const formattedShares = shares.map((share: any) => ({
+      id: share.id,
+      name: share.file.name,
+      sharedWith: share.toEmail,
+      expiresAt: share.expiry,
+      access: share.passwordProtected ? "Protected Download" : "Download",
+      status:
+        share.status === "ACTIVE" && new Date() > new Date(share.expiry)
+          ? "EXPIRED"
+          : share.status === "ACTIVE" && share.downloads >= share.downloadLimit
+            ? "EXPIRED"
+            : share.status,
+    }));
+
+    return NextResponse.json(formattedShares);
+  } catch (error) {
+    console.error("Failed to fetch shares:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch file shares" },
       { status: 500 },
     );
   }

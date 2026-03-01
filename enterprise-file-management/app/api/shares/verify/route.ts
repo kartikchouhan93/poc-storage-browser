@@ -30,7 +30,7 @@ export async function GET(request: NextRequest) {
       .sign(JWT_SECRET);
 
     const response = NextResponse.redirect(
-      new URL(`/app/file/share/${shareId}`, request.url),
+      new URL(`/file/share/${shareId}`, request.url),
     );
 
     response.cookies.set(`share_session_${shareId}`, sessionToken, {

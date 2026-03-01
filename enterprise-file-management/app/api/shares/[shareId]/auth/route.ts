@@ -10,10 +10,10 @@ const JWT_SECRET = new TextEncoder().encode(
 
 export async function POST(
   request: NextRequest,
-  { params }: { params: { shareId: string } },
+  { params }: { params: Promise<{ shareId: string }> | { shareId: string } },
 ) {
   try {
-    const { shareId } = params;
+    const { shareId } = await params;
     const body = await request.json();
     const { email, password } = body;
 

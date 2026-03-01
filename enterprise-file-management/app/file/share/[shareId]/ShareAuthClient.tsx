@@ -5,7 +5,7 @@ import { Card, CardHeader, CardTitle, CardDescription, CardContent } from "@/com
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { Lock, Mail, ArrowRight, ShieldCheck } from "lucide-react";
+import { Lock, Mail, ArrowRight, ShieldCheck, AlertCircle } from "lucide-react";
 import { useToast } from "@/components/ui/use-toast";
 
 export default function ShareAuthClient({ shareId, requiresPassword }: { shareId: string, requiresPassword: boolean }) {
@@ -13,11 +13,13 @@ export default function ShareAuthClient({ shareId, requiresPassword }: { shareId
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [sent, setSent] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const { toast } = useToast();
 
   const handleRequestAccess = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
+    setError(null);
 
     try {
       const res = await fetch(`/api/shares/${shareId}/auth`, {
@@ -38,6 +40,7 @@ export default function ShareAuthClient({ shareId, requiresPassword }: { shareId
         description: "Check your email for the secure access link.",
       });
     } catch (err: any) {
+      setError(err.message);
       toast({
         title: "Error",
         description: err.message,
@@ -53,7 +56,7 @@ export default function ShareAuthClient({ shareId, requiresPassword }: { shareId
       <Card className="w-full max-w-md mx-auto mt-20 shadow-lg border-t-4 border-t-green-500">
         <CardHeader className="text-center">
           <div className="flex justify-center mb-4">
-            <div className="p-4 bg-green-100 rounded-full text-green-600">
+            <div className="p-4 bg-green-100 dark:bg-green-900/30 rounded-full text-green-600 dark:text-green-400">
               <ShieldCheck className="w-10 h-10" />
             </div>
           </div>
@@ -75,11 +78,17 @@ export default function ShareAuthClient({ shareId, requiresPassword }: { shareId
         </CardDescription>
       </CardHeader>
       <CardContent>
+        {error && (
+          <div className="p-3 mb-5 border border-destructive/20 rounded-md bg-destructive/10 text-destructive text-sm font-medium flex items-center gap-2">
+            <AlertCircle className="w-5 h-5 shrink-0" />
+            <span>{error}</span>
+          </div>
+        )}
         <form onSubmit={handleRequestAccess} className="space-y-5">
           <div className="space-y-2">
             <Label htmlFor="email">Email Address</Label>
             <div className="relative">
-              <Mail className="absolute left-3 top-3.5 h-4 w-4 text-gray-400" />
+              <Mail className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
               <Input 
                 id="email" 
                 type="email" 
@@ -96,7 +105,7 @@ export default function ShareAuthClient({ shareId, requiresPassword }: { shareId
             <div className="space-y-2">
               <Label htmlFor="password">Access Password</Label>
               <div className="relative">
-                <Lock className="absolute left-3 top-3.5 h-4 w-4 text-gray-400" />
+                <Lock className="absolute left-3 top-3.5 h-4 w-4 text-muted-foreground" />
                 <Input 
                   id="password" 
                   type="password" 

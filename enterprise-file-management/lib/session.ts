@@ -16,7 +16,11 @@ export async function getCurrentUser() {
   try {
     let user = await prisma.user.findUnique({
       where: { email },
-      include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
+      include: {
+        tenant: true,
+        policies: true,
+        teams: { include: { team: { include: { policies: true } } } },
+      },
     });
 
     if (!user && email) {
@@ -28,7 +32,11 @@ export async function getCurrentUser() {
               ? "PLATFORM_ADMIN"
               : "TEAMMATE",
         },
-        include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
+        include: {
+          tenant: true,
+          policies: true,
+          teams: { include: { team: { include: { policies: true } } } },
+        },
       });
     }
 
@@ -53,7 +61,11 @@ export async function getCurrentUser() {
         user = await prisma.user.update({
           where: { email },
           data: { tenantId: validTenantId },
-          include: { tenant: true, policies: true, teams: { include: { team: { include: { policies: true } } } } },
+          include: {
+            tenant: true,
+            policies: true,
+            teams: { include: { team: { include: { policies: true } } } },
+          },
         });
       }
     }
@@ -61,6 +73,6 @@ export async function getCurrentUser() {
     return user;
   } catch (error) {
     console.error("Session DB Error", error);
-    return null;
+    throw error;
   }
 }

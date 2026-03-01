@@ -734,12 +734,14 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
           <FolderOpen className="h-12 w-12 text-muted-foreground mb-4" />
           <p className="text-lg font-medium">This folder is empty</p>
           <p className="text-sm text-muted-foreground mt-1">
-            Upload files or create a new folder to get started
+            {canUpload ? "Upload files or create a new folder to get started" : "No files have been uploaded here yet."}
           </p>
-          <Button className="mt-4 gap-1.5" onClick={onUploadClick}>
-            <Upload className="h-4 w-4" />
-            Upload Files
-          </Button>
+          {canUpload && (
+            <Button className="mt-4 gap-1.5" onClick={onUploadClick}>
+              <Upload className="h-4 w-4" />
+              Upload Files
+            </Button>
+          )}
         </div>
       )}
       {/* Rename Dialog */}

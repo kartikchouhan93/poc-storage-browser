@@ -17,23 +17,35 @@ import { GenericModal } from "@/components/ui/generic-modal"
 import { Suspense } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
 
-// Mock Data
-const MOCK_SHARES = [
-  { id: "1", name: "Q1 Financial Report.pdf", sharedWith: "john@example.com", expiresAt: "2026-03-01T10:00:00Z", access: "Read Only", status: "Active" },
-  { id: "2", name: "Product Roadmap.pptx", sharedWith: "design-team@example.com", expiresAt: "2026-04-15T00:00:00Z", access: "Edit", status: "Active" },
-  { id: "3", name: "Architecture Diagram.drawio", sharedWith: "vendor-tech@external.com", expiresAt: "2026-02-28T00:00:00Z", access: "View", status: "Expired" },
-  { id: "4", name: "Project Requirements.docx", sharedWith: "sarah@example.com", expiresAt: null, access: "Edit", status: "Active" },
-];
-
 function SharesPageContent() {
   const [searchQuery, setSearchQuery] = React.useState("")
-  const [shares, setShares] = React.useState(MOCK_SHARES)
+  const [shares, setShares] = React.useState<any[]>([])
+  const [loading, setLoading] = React.useState(true)
   
   const [editOpen, setEditOpen] = React.useState(false)
   const [editingShare, setEditingShare] = React.useState<any>(null)
   
   // Edit Form State
   const [editAccess, setEditAccess] = React.useState("")
+
+  React.useEffect(() => {
+    fetchShares()
+  }, [])
+
+  const fetchShares = async () => {
+    try {
+      setLoading(true)
+      const res = await fetch("/api/shares")
+      const data = await res.json()
+      if (res.ok) {
+        setShares(data)
+      }
+    } catch (err) {
+      console.error("Failed to fetch shares:", err)
+    } finally {
+      setLoading(false)
+    }
+  }
 
   const filteredShares = React.useMemo(() => {
     return shares.filter(share => 
@@ -45,22 +57,30 @@ function SharesPageContent() {
   const handleEditClick = (share: any) => {
     setEditingShare(share)
     setEditAccess(share.access)
+    // NOTE: Edit functionality is complex for shares since we might need to reset OTPs or change limits.
+    // For now we will allow opening the modal but the save will be a placeholder or disabled.
     setEditOpen(true)
   }
 
   const handleSaveEdit = () => {
     if (!editingShare) return
-    
-    setShares(prev => prev.map(s => 
-      s.id === editingShare.id ? { ...s, access: editAccess } : s
-    ))
+    // Not fully supported in schema MVP without more fields, closing for now.
     setEditOpen(false)
     setEditingShare(null)
   }
 
-  const handleDelete = (id: string) => {
+  const handleDelete = async (id: string) => {
     if (confirm("Are you sure you want to revoke this share?")) {
-      setShares(prev => prev.filter(s => s.id !== id))
+      try {
+        const res = await fetch(`/api/shares/${id}`, { method: "DELETE" })
+        if (res.ok) {
+          setShares(prev => prev.map(s => s.id === id ? { ...s, status: "REVOKED" } : s))
+        } else {
+          alert("Failed to revoke share");
+        }
+      } catch (err) {
+        console.error("Error revoking share", err);
+      }
     }
   }
 
@@ -84,7 +104,7 @@ function SharesPageContent() {
       </span>
     )},
     { header: "Status", accessorKey: "status", cell: (row: any) => (
-      <span className={`px-2 py-1 rounded-full text-xs font-medium ${row.status === 'Active' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'}`}>
+      <span className={`px-2 py-1 rounded-full text-xs font-medium ${row.status === 'ACTIVE' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950/50 dark:text-emerald-400' : 'bg-red-100 text-red-700 dark:bg-red-950/50 dark:text-red-400'}`}>
         {row.status}
       </span>
     )},

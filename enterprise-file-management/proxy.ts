@@ -16,6 +16,8 @@ const publicPaths = [
   "/api/auth/confirm-password",
   "/api/auth/google",
   "/api/auth/callback",
+  "/api/shares",
+  "/file/share",
 ];
 
 export async function proxy(request: NextRequest) {
