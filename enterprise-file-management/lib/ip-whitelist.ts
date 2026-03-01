@@ -2,22 +2,29 @@ import { NextRequest } from "next/server";
 
 export function extractIpFromRequest(request: NextRequest): string {
   // Get IP from headers (x-forwarded-for, x-real-ip) or fallback
+  let ip = "127.0.0.1";
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) {
-    return forwardedFor.split(",")[0].trim();
-  }
-  const realIp = request.headers.get("x-real-ip");
-  if (realIp) {
-    return realIp.trim();
+    ip = forwardedFor.split(",")[0].trim();
+  } else {
+    const realIp = request.headers.get("x-real-ip");
+    if (realIp) {
+      ip = realIp.trim();
+    } else {
+      // Next.js standard ip property
+      const reqAsAny = request as any;
+      if (reqAsAny.ip) {
+        ip = reqAsAny.ip;
+      }
+    }
   }
 
-  // Next.js standard ip property
-  const reqAsAny = request as any;
-  if (reqAsAny.ip) {
-    return reqAsAny.ip;
+  // Normalize IPv6 localhost to IPv4 localhost to make testing robust locally
+  if (ip === "::1" || ip === "0:0:0:0:0:0:0:1") {
+    ip = "127.0.0.1";
   }
 
-  return "127.0.0.1"; // Default fallback
+  return ip;
 }
 
 export function ipToLong(ip: string): number {
