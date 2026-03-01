@@ -26,9 +26,9 @@ export async function GET(request: NextRequest) {
         teams: {
           where: { isDeleted: false },
           include: {
-            team: { include: { policies: true } }
-          }
-        }
+            team: { include: { policies: true } },
+          },
+        },
       },
     });
 
@@ -163,11 +163,8 @@ export async function GET(request: NextRequest) {
         // Use FTS if searchVector is populated, otherwise fall back to ILIKE
         Prisma.sql`(
           (f."searchVector" IS NOT NULL AND f."searchVector" @@ websearch_to_tsquery('english', ${query}))
-          OR
-          (f."searchVector" IS NULL AND (
-            f.name ILIKE ${"%" + query + "%"}
-            OR f.key ILIKE ${"%" + query + "%"}
-          ))
+          OR f.name ILIKE ${"%" + query + "%"}
+          OR f.key ILIKE ${"%" + query + "%"}
         )`,
       ];
 
@@ -175,7 +172,9 @@ export async function GET(request: NextRequest) {
         conditions.push(Prisma.sql`f."bucketId" = ${bucketId}`);
       } else if (allowedBucketIdFilter !== null) {
         // TEAMMATE: restrict to allowed buckets only
-        conditions.push(Prisma.sql`f."bucketId" = ANY(${allowedBucketIdFilter}::text[])`);
+        conditions.push(
+          Prisma.sql`f."bucketId" = ANY(${allowedBucketIdFilter}::text[])`,
+        );
       }
       if (createdBy) {
         conditions.push(Prisma.sql`f."createdBy" = ${createdBy}`);
@@ -340,7 +339,7 @@ export async function GET(request: NextRequest) {
         name: f.name,
         key: f.key,
         type,
-        size: f.size || 0,
+        size: Number(f.size) || 0,
         modifiedAt: (f.createdAt instanceof Date
           ? f.createdAt
           : new Date(f.createdAt as string)

@@ -16,16 +16,16 @@ export async function GET(request: NextRequest) {
 
     const user = await prisma.user.findUnique({
       where: { email: payload.email as string },
-      include: { 
+      include: {
         policies: true,
         teams: {
           where: { isDeleted: false },
           include: {
             team: {
-              include: { policies: true }
-            }
-          }
-        }
+              include: { policies: true },
+            },
+          },
+        },
       },
     });
 
@@ -110,7 +110,10 @@ export async function GET(request: NextRequest) {
         Prisma.sql`
           SELECT id FROM "FileObject"
           WHERE "bucketId" = ${bucketId}
-            AND "searchVector" @@ websearch_to_tsquery('english', ${search.trim()})
+            AND (
+              "searchVector" @@ websearch_to_tsquery('english', ${search.trim()})
+              OR name ILIKE ${"%" + search.trim() + "%"}
+            )
             ${keyPrefix ? Prisma.sql`AND key LIKE ${keyPrefix + "%"}` : Prisma.empty}
         `,
       );
@@ -197,6 +200,7 @@ export async function GET(request: NextRequest) {
         bucket: "prod-assets", // Placeholder
         bucketId: f.bucketId,
         path: f.key,
+        key: f.key,
         breadcrumbs,
         children: f.children.map((c) => ({ id: c.id })),
       };

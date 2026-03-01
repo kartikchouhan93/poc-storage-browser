@@ -6,9 +6,11 @@ import { Loader2, Minimize2, Maximize2, X, File, CheckCircle, AlertCircle } from
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useUpload } from "@/components/providers/upload-provider"
+import { useAuth } from "@/components/providers/AuthProvider"
 import { cn } from "@/lib/utils"
 
 export function GlobalUploadIndicator() {
+    const { user } = useAuth()
     const { files, isUploading } = useUpload() // [MODIFIED] Get isUploading from context
     const [isMinimized, setIsMinimized] = React.useState(false)
     const [isOpen, setIsOpen] = React.useState(true)
@@ -29,7 +31,7 @@ export function GlobalUploadIndicator() {
     // Provider should probably clean up completed files after some time or manual dismissal.
     // For now, let's show all files that exist in the context context.
 
-    if (files.length === 0 || !isOpen) return null
+    if (!user || files.length === 0 || !isOpen) return null
 
 
     const progressSum = files.reduce((acc, f) => acc + f.progress, 0)

@@ -29,8 +29,10 @@ import { toast } from "sonner"
 import { mockOrganization, mockUsers } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
 import { AwsAccountSettings } from "@/components/settings/aws-account-settings"
+import { useAuth } from "@/components/providers/AuthProvider"
 
 export default function SettingsPage() {
+  const { user } = useAuth()
   const [showApiKey, setShowApiKey] = React.useState(false)
   const apiKey = "cv_live_sk_a8x4k2mN7pQ3rT9wB5jH1cF6"
 
@@ -80,7 +82,7 @@ export default function SettingsPage() {
                   <div className="flex items-center gap-4">
                     <Avatar className="h-16 w-16">
                       <AvatarFallback className="bg-primary/10 text-primary text-lg">
-                        SC
+                        {user?.name?.substring(0, 2).toUpperCase() || "U"}
                       </AvatarFallback>
                     </Avatar>
                     <div>
@@ -95,19 +97,20 @@ export default function SettingsPage() {
                   <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
                     <div className="space-y-1.5">
                       <Label htmlFor="fullname">Full Name</Label>
-                      <Input id="fullname" defaultValue="Sarah Chen" />
+                      <Input id="fullname" defaultValue={user?.name || ""} />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="email">Email</Label>
                       <Input
                         id="email"
-                        defaultValue="sarah@acme.co"
+                        defaultValue={user?.email || ""}
                         type="email"
+                        disabled
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="role">Role</Label>
-                      <Input id="role" defaultValue="Admin" disabled />
+                      <Input id="role" defaultValue={user?.role || ""} disabled />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="department">Department</Label>

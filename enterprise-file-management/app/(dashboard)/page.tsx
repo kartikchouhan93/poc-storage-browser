@@ -14,8 +14,11 @@ import {
   Share2,
   Trash2,
   Upload,
+  Calendar as CalendarIcon,
 } from "lucide-react"
 import Link from "next/link"
+import { format, differenceInDays } from "date-fns"
+import { DateRange } from "react-day-picker"
 import {
   Area,
   AreaChart,
@@ -44,6 +47,11 @@ import { SearchCommandDialog } from "@/components/search-command"
 import { getAuditLogs, getDashboardStats, type DashboardStats } from "@/app/actions/audit"
 import { useEffect, useState } from "react"
 import { useAuth } from "@/components/providers/AuthProvider"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
+import { Calendar } from "@/components/ui/calendar"
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
+import { useToast } from "@/components/ui/use-toast"
+import { cn } from "@/lib/utils"
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -61,20 +69,37 @@ export default function OverviewPage() {
   const [dashboardStats, setDashboardStats] = useState<DashboardStats | null>(null)
   const [statsLoading, setStatsLoading] = useState(true)
 
+  const [timeRange, setTimeRange] = useState<string>("all")
+  const [dateRange, setDateRange] = useState<DateRange | undefined>()
+  const { toast } = useToast()
+
   useEffect(() => {
     getAuditLogs().then((res) => {
       if (res.success && res.data) {
         setRecentLogs(res.data.slice(0, 6))
       }
     })
+  }, []) // Audit logs loaded once
 
-    getDashboardStats().then((res) => {
+  useEffect(() => {
+    if (timeRange === "custom" && (!dateRange?.from || !dateRange?.to)) {
+      return
+    }
+
+    setStatsLoading(true)
+    const filters: any = { timeRange }
+    if (timeRange === "custom" && dateRange?.from && dateRange?.to) {
+      filters.dateFrom = dateRange.from.toISOString()
+      filters.dateTo = dateRange.to.toISOString()
+    }
+
+    getDashboardStats(filters).then((res) => {
       if (res.success) {
         setDashboardStats(res.data)
       }
       setStatsLoading(false)
     })
-  }, [])
+  }, [timeRange, dateRange])
 
   // Derive stat cards from real data
   const stats = [
@@ -125,23 +150,98 @@ export default function OverviewPage() {
   return (
     <>
       <SearchCommandDialog />
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-6">
-        <SidebarTrigger className="-ml-2" />
-        <Separator orientation="vertical" className="mr-2 h-4" />
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbPage className="flex items-center gap-2">
-                Overview
-                {user?.role && (
-                  <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
-                    {user.role}
-                  </Badge>
-                )}
-              </BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+      <header className="flex h-14 shrink-0 items-center justify-between border-b px-6">
+        <div className="flex items-center gap-2">
+          <SidebarTrigger className="-ml-2" />
+          <Separator orientation="vertical" className="mr-2 h-4" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbPage className="flex items-center gap-2">
+                  Overview
+                  {user?.role && (
+                    <Badge variant="outline" className="text-xs bg-primary/10 text-primary border-primary/20">
+                      {user.role}
+                    </Badge>
+                  )}
+                </BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </div>
+
+        <div className="flex items-center gap-2">
+          {timeRange === "custom" && (
+            <Popover>
+              <PopoverTrigger asChild>
+                <Button
+                  id="date"
+                  variant={"outline"}
+                  className={cn(
+                    "w-[240px] justify-start text-left font-normal",
+                    !dateRange && "text-muted-foreground"
+                  )}
+                >
+                  <CalendarIcon className="mr-2 h-4 w-4" />
+                  {dateRange?.from ? (
+                    dateRange.to ? (
+                      <>
+                        {format(dateRange.from, "LLL dd, y")} -{" "}
+                        {format(dateRange.to, "LLL dd, y")}
+                      </>
+                    ) : (
+                      format(dateRange.from, "LLL dd, y")
+                    )
+                  ) : (
+                    <span>Pick a date</span>
+                  )}
+                </Button>
+              </PopoverTrigger>
+              <PopoverContent className="w-auto p-0" align="end">
+                <Calendar
+                  initialFocus
+                  mode="range"
+                  defaultMonth={dateRange?.from}
+                  selected={dateRange}
+                  onSelect={(range) => {
+                    if (range?.from && range?.to) {
+                      const days = differenceInDays(range.to, range.from)
+                      if (days > 30) {
+                        toast({
+                          title: "Invalid Range",
+                          description: "Custom date range cannot exceed 30 days.",
+                          variant: "destructive"
+                        })
+                        return
+                      }
+                    }
+                    setDateRange(range)
+                  }}
+                  numberOfMonths={2}
+                />
+              </PopoverContent>
+            </Popover>
+          )}
+
+          <Select value={timeRange} onValueChange={(val) => {
+            setTimeRange(val)
+            if (val !== "custom") {
+              setDateRange(undefined)
+            }
+          }}>
+            <SelectTrigger className="w-[140px]">
+              <SelectValue placeholder="Select Range" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">All Time</SelectItem>
+              <SelectItem value="today">Today</SelectItem>
+              <SelectItem value="7d">Last 7 Days</SelectItem>
+              <SelectItem value="14d">Last 14 Days</SelectItem>
+              <SelectItem value="30d">Last 30 Days</SelectItem>
+              <SelectItem value="custom">Custom Range</SelectItem>
+            </SelectContent>
+          </Select>
+        </div>
       </header>
 
       <div className="flex-1 overflow-auto">

@@ -13,6 +13,7 @@ import { decrypt } from "@/lib/encryption";
 import { checkPermission } from "@/lib/rbac";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function DELETE(
   request: NextRequest,
@@ -121,6 +122,7 @@ export async function DELETE(
       resource: "FileObject",
       resourceId: file.id,
       status: "SUCCESS",
+      ipAddress: extractIpFromRequest(request),
       details: { bucketId: file.bucket.id, key: file.key },
     });
 
@@ -230,7 +232,10 @@ export async function PATCH(
       },
     });
 
-    return NextResponse.json(updatedFile);
+    return NextResponse.json({
+      ...updatedFile,
+      size: Number(updatedFile.size) || 0,
+    });
   } catch (error) {
     console.error("Rename error:", error);
     return NextResponse.json(

@@ -21,6 +21,7 @@ model Tenant {
   buckets       Bucket[]
   objects       FileObject[]
   teams         Team[]
+  shares        Share[]
 }
 
 model Account {
@@ -59,6 +60,7 @@ model Bucket {
   encryption    Boolean      @default(false)
   tags          String[]
   quotaBytes    BigInt       @default(107374182400) // 100GB
+  shares        Share[]
 }
 
 model FileObject {
@@ -66,7 +68,7 @@ model FileObject {
   name          String
   key           String
   isFolder      Boolean                  @default(false)
-  size          Int?
+  size          BigInt?
   mimeType      String?
   bucketId      String
   parentId      String?
@@ -81,6 +83,7 @@ model FileObject {
   tenant        Tenant                   @relation(fields: [tenantId], references: [id])
   parent        FileObject?              @relation("ParentChild", fields: [parentId], references: [id])
   children      FileObject[]             @relation("ParentChild")
+  shares        Share[]
   searchVector  Unsupported("tsvector")?
 
   @@index([searchVector], type: Gin)
@@ -118,6 +121,8 @@ model User {
   policiesUpdated  ResourcePolicy[] @relation("PolicyUpdatedBy")
   auditLogsCreated AuditLog[]       @relation("AuditLogCreatedBy")
   auditLogsUpdated AuditLog[]       @relation("AuditLogUpdatedBy")
+  sharesCreated    Share[]          @relation("ShareCreatedBy")
+  sharesUpdated    Share[]          @relation("ShareUpdatedBy")
 }
 
 model ResourcePolicy {
@@ -144,6 +149,7 @@ model AuditLog {
   resource      String
   details       String?
   status        String
+  ipAddress     String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   createdBy     String?
@@ -151,6 +157,10 @@ model AuditLog {
   createdByUser User?    @relation("AuditLogCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User?    @relation("AuditLogUpdatedBy", fields: [updatedBy], references: [id])
   user          User     @relation(fields: [userId], references: [id])
+
+  @@index([action])
+  @@index([createdAt])
+  @@index([userId, action])
 }
 
 enum Role {
@@ -160,16 +170,23 @@ enum Role {
   TEAMMATE
 }
 
+enum ShareStatus {
+  ACTIVE
+  EXPIRED
+  REVOKED
+}
+
 model Team {
-  id        String           @id @default(cuid())
-  name      String
-  tenantId  String
-  tenant    Tenant           @relation(fields: [tenantId], references: [id])
-  members   TeamMembership[]
-  policies  ResourcePolicy[]
-  isDeleted Boolean          @default(false)
-  createdAt DateTime         @default(now())
-  updatedAt DateTime         @updatedAt
+  id         String           @id @default(cuid())
+  name       String
+  tenantId   String
+  allowedIps String?
+  tenant     Tenant           @relation(fields: [tenantId], references: [id])
+  members    TeamMembership[]
+  policies   ResourcePolicy[]
+  isDeleted  Boolean          @default(false)
+  createdAt  DateTime         @default(now())
+  updatedAt  DateTime         @updatedAt
 }
 
 model TeamMembership {
@@ -204,4 +221,33 @@ model SyncActivity {
   error     String?
   createdAt DateTime    @default(now())
   history   SyncHistory @relation(fields: [historyId], references: [id], onDelete: Cascade)
+}
+
+model Share {
+  id                String      @id @default(cuid())
+  fileId            String
+  tenantId          String
+  bucketId          String
+  toEmail           String
+  expiry            DateTime
+  downloadLimit     Int         @default(3)
+  downloads         Int         @default(0)
+  passwordProtected Boolean     @default(false)
+  passwordHash      String?
+  status            ShareStatus @default(ACTIVE)
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  createdBy         String?
+  updatedBy         String?
+  createdByUser     User?       @relation("ShareCreatedBy", fields: [createdBy], references: [id])
+  updatedByUser     User?       @relation("ShareUpdatedBy", fields: [updatedBy], references: [id])
+  file              FileObject  @relation(fields: [fileId], references: [id])
+  tenant            Tenant      @relation(fields: [tenantId], references: [id])
+  bucket            Bucket      @relation(fields: [bucketId], references: [id])
+
+  @@index([fileId])
+  @@index([tenantId])
+  @@index([bucketId])
+  @@index([toEmail])
+  @@index([status])
 }

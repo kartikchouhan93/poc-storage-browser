@@ -117,6 +117,8 @@ import { fetchWithAuth } from "@/lib/api";
 import { getAuthHeader } from "@/lib/token";
 import { SearchInput } from "./search-input";
 import { useDownload } from "@/components/providers/download-provider";
+import { ShareModal } from "@/components/share-modal";
+import { FileViewer } from "./file-viewer";
 
 // ...
 
@@ -135,6 +137,10 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
   const [fileToRename, setFileToRename] = React.useState<any>(null)
   const [newName, setNewName] = React.useState("")
   const [searchQuery, setSearchQuery] = React.useState("")
+  const [shareOpen, setShareOpen] = React.useState(false)
+  const [fileToShare, setFileToShare] = React.useState<any>(null)
+  const [viewerOpen, setViewerOpen] = React.useState(false)
+  const [fileToView, setFileToView] = React.useState<any>(null)
 
   const currentParentId = path.length > 0 ? path[path.length - 1].id : null
 
@@ -243,10 +249,22 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
   }
 
   const handleAction = async (action: string, file: any) => {
+    if (action === "Preview") {
+      setFileToView({ ...file, bucketId: file.bucketId || bucketId })
+      setViewerOpen(true)
+      return
+    }
+
     if (action === "Rename") {
       setFileToRename(file)
       setNewName(file.name)
       setRenameOpen(true)
+      return
+    }
+
+    if (action === "Share") {
+      setFileToShare(file)
+      setShareOpen(true)
       return
     }
 
@@ -271,7 +289,7 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
     }
 
     if (action === "Download") {
-      addDownloads([{ id: file.id, name: file.name, bucketId: file.bucketId || bucketId || "", parentId: file.parentId || null }])
+      addDownloads([{ id: file.id, name: file.name, bucketId: file.bucketId || bucketId || "", parentId: file.parentId || null, key: file.key }])
       return
     }
 
@@ -344,7 +362,8 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
         id: f.id,
         name: f.name,
         bucketId: f.bucketId || bucketId || "",
-        parentId: f.parentId || null
+        parentId: f.parentId || null,
+        key: f.key
       }))
 
     if (filesToDownload.length > 0) {
@@ -754,6 +773,22 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
           </DialogFooter>
         </DialogContent>
       </Dialog>
+      
+      {/* Share Modal */}
+      {fileToShare && (
+        <ShareModal 
+          open={shareOpen} 
+          onOpenChange={setShareOpen} 
+          file={fileToShare} 
+        />
+      )}
+      
+      {/* File Viewer */}
+      <FileViewer 
+        file={fileToView} 
+        open={viewerOpen} 
+        onOpenChange={setViewerOpen} 
+      />
     </div>
   )
 }

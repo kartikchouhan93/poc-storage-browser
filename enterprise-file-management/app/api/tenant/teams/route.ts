@@ -1,69 +1,84 @@
-import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { getCurrentUser } from '@/lib/session';
-import { logAudit } from '@/lib/audit';
+import { NextRequest, NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { getCurrentUser } from "@/lib/session";
+import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function GET(request: NextRequest) {
-    try {
-        const user = await getCurrentUser();
-        if (!user || !user.tenantId) {
-            return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
-        }
-
-        const teams = await prisma.team.findMany({
-            where: { tenantId: user.tenantId, isDeleted: false },
-            include: {
-                _count: {
-                    select: { members: true }
-                }
-            },
-            orderBy: { createdAt: 'desc' }
-        });
-
-        return NextResponse.json(teams);
-    } catch (error) {
-        console.error("Fetch teams error:", error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  try {
+    const user = await getCurrentUser();
+    if (!user || !user.tenantId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    const teams = await prisma.team.findMany({
+      where: { tenantId: user.tenantId, isDeleted: false },
+      include: {
+        _count: {
+          select: { members: true },
+        },
+      },
+      orderBy: { createdAt: "desc" },
+    });
+
+    return NextResponse.json(teams);
+  } catch (error) {
+    console.error("Fetch teams error:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
+  }
 }
 
 export async function POST(request: NextRequest) {
-    try {
-        const user = await getCurrentUser();
-        if (!user || user.role !== 'TENANT_ADMIN' || !user.tenantId) {
-            return NextResponse.json({ error: 'Unauthorized or insufficient permissions' }, { status: 401 });
-        }
-
-        const { name } = await request.json();
-
-        if (!name?.trim()) {
-            return NextResponse.json({ error: 'Team name is required' }, { status: 400 });
-        }
-
-        const team = await prisma.team.create({
-            data: {
-                name: name.trim(),
-                tenantId: user.tenantId,
-            },
-            include: {
-                _count: {
-                    select: { members: true }
-                }
-            }
-        });
-
-        logAudit({
-            userId: user.id,
-            action: "TEAM_CREATED",
-            resource: "Team",
-            resourceId: team.id,
-            status: "SUCCESS",
-            details: { name: team.name, tenantId: user.tenantId }
-        });
-
-        return NextResponse.json(team);
-    } catch (error) {
-        console.error("Create team error:", error);
-        return NextResponse.json({ error: 'Internal Server Error' }, { status: 500 });
+  try {
+    const user = await getCurrentUser();
+    if (!user || user.role !== "TENANT_ADMIN" || !user.tenantId) {
+      return NextResponse.json(
+        { error: "Unauthorized or insufficient permissions" },
+        { status: 401 },
+      );
     }
+
+    const { name, allowedIps } = await request.json();
+
+    if (!name?.trim()) {
+      return NextResponse.json(
+        { error: "Team name is required" },
+        { status: 400 },
+      );
+    }
+
+    const team = await prisma.team.create({
+      data: {
+        name: name.trim(),
+        tenantId: user.tenantId,
+        allowedIps: allowedIps ? allowedIps.trim() : null,
+      },
+      include: {
+        _count: {
+          select: { members: true },
+        },
+      },
+    });
+
+    logAudit({
+      userId: user.id,
+      action: "TEAM_CREATED",
+      resource: "Team",
+      resourceId: team.id,
+      status: "SUCCESS",
+      ipAddress: extractIpFromRequest(request),
+      details: { name: team.name, tenantId: user.tenantId },
+    });
+
+    return NextResponse.json(team);
+  } catch (error) {
+    console.error("Create team error:", error);
+    return NextResponse.json(
+      { error: "Internal Server Error" },
+      { status: 500 },
+    );
+  }
 }

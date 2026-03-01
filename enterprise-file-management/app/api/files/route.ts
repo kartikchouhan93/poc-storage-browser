@@ -7,9 +7,49 @@ import { verifyToken } from "@/lib/token";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
 import { checkPermission } from "@/lib/rbac";
+import { extractIpFromRequest, validateUserIpAccess } from "@/lib/ip-whitelist";
+import { getCurrentUser } from "@/lib/session";
 
 export async function GET(request: NextRequest) {
   try {
+    let user = await getCurrentUser();
+    if (!user) {
+      const token = request.headers.get("Authorization")?.split(" ")[1];
+      if (token) {
+        const payload = await verifyToken(token);
+        if (payload && typeof payload === "object" && payload.email) {
+          user = await prisma.user.findUnique({
+            where: { email: payload.email as string },
+            include: {
+              tenant: true,
+              policies: true,
+              teams: { include: { team: { include: { policies: true } } } },
+            },
+          });
+        }
+      }
+    }
+
+    if (!user) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    const clientIp = extractIpFromRequest(request);
+    if (!validateUserIpAccess(clientIp, user)) {
+      logAudit({
+        userId: user.id,
+        action: "IP_ACCESS_DENIED",
+        resource: "FileObject",
+        status: "FAILED",
+        ipAddress: clientIp,
+        details: { reason: "IP not whitelisted for team" },
+      });
+      return NextResponse.json(
+        { error: "Forbidden: IP not whitelisted for your team" },
+        { status: 403 },
+      );
+    }
+
     const searchParams = request.nextUrl.searchParams;
     const bucketId = searchParams.get("bucketId");
     const parentId = searchParams.get("parentId");
@@ -64,7 +104,7 @@ export async function GET(request: NextRequest) {
           : f.mimeType?.includes("pdf")
             ? "pdf"
             : "document",
-      size: f.size || 0,
+      size: Number(f.size) || 0,
       modifiedAt: f.updatedAt.toISOString(),
       owner: "Admin",
       shared: false,
@@ -113,6 +153,22 @@ export async function POST(request: NextRequest) {
 
     if (!user)
       return NextResponse.json({ error: "User not found" }, { status: 404 });
+
+    const clientIp = extractIpFromRequest(request);
+    if (!validateUserIpAccess(clientIp, user)) {
+      logAudit({
+        userId: user.id,
+        action: "IP_ACCESS_DENIED",
+        resource: "FileObject",
+        status: "FAILED",
+        ipAddress: clientIp,
+        details: { reason: "IP not whitelisted for team" },
+      });
+      return NextResponse.json(
+        { error: "Forbidden: IP not whitelisted for your team" },
+        { status: 403 },
+      );
+    }
 
     const body = (await request.json()) as any;
     const { name, isFolder, parentId, bucketId, size, mimeType } = body;
@@ -208,6 +264,17 @@ export async function POST(request: NextRequest) {
           updatedBy: user.id,
         },
       });
+
+      if (!isFolder) {
+        logAudit({
+          userId: user.id,
+          action: "FILE_UPLOAD",
+          resource: "FileObject",
+          resourceId: file.id,
+          status: "SUCCESS",
+          details: { bucketId: bucket.id, key, size },
+        });
+      }
     } else {
       file = await prisma.fileObject.create({
         data: {
@@ -233,10 +300,19 @@ export async function POST(request: NextRequest) {
           status: "SUCCESS",
           details: { name, bucketId, key },
         });
+      } else {
+        logAudit({
+          userId: user.id,
+          action: "FILE_UPLOAD",
+          resource: "FileObject",
+          resourceId: file.id,
+          status: "SUCCESS",
+          details: { bucketId: bucket.id, key, size },
+        });
       }
     }
 
-    return NextResponse.json(file);
+    return NextResponse.json({ ...file, size: Number(file.size) || 0 });
   } catch (error) {
     console.error("Failed to create file:", error);
     return NextResponse.json(

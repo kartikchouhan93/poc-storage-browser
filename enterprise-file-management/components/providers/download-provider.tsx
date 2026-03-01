@@ -11,11 +11,12 @@ export interface DownloadFile {
     status: "pending" | "downloading" | "complete" | "error"
     bucketId: string
     parentId: string | null
+    key?: string
 }
 
 interface DownloadContextType {
     files: DownloadFile[]
-    addDownloads: (files: { id: string, name: string, bucketId: string, parentId: string | null }[]) => void
+    addDownloads: (files: { id: string, name: string, bucketId: string, parentId: string | null, key?: string }[]) => void
     removeFile: (id: string) => void
     isDownloading: boolean
 }
@@ -34,14 +35,15 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
     const [files, setFiles] = React.useState<DownloadFile[]>([])
     const [isProcessing, setIsProcessing] = React.useState(false)
 
-    const addDownloads = (newFiles: { id: string, name: string, bucketId: string, parentId: string | null }[]) => {
+    const addDownloads = (newFiles: { id: string, name: string, bucketId: string, parentId: string | null, key?: string }[]) => {
         const downloadFiles: DownloadFile[] = newFiles.map((f, i) => ({
             id: `download-${f.id}-${Date.now()}-${i}`,
             name: f.name,
             progress: 0,
             status: "pending",
             bucketId: f.bucketId,
-            parentId: f.parentId
+            parentId: f.parentId,
+            key: f.key
         }))
 
         setFiles((prev) => [...prev, ...downloadFiles])
@@ -65,7 +67,7 @@ export function DownloadProvider({ children }: { children: React.ReactNode }) {
         setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'downloading', progress: 50 } : f))
 
         try {
-            const res = await fetchWithAuth(`/api/files/presigned?bucketId=${fileItem.bucketId}&name=${encodeURIComponent(fileItem.name)}&action=download&parentId=${fileItem.parentId || ''}`)
+            const res = await fetchWithAuth(`/api/files/presigned?bucketId=${fileItem.bucketId}&name=${encodeURIComponent(fileItem.name)}&action=download${fileItem.key ? `&key=${encodeURIComponent(fileItem.key)}` : ''}&parentId=${fileItem.parentId || ''}`)
             if (res.ok) {
                 const { url } = await res.json()
                 if (url) {

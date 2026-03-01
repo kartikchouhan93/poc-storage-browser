@@ -1,32 +1,44 @@
-import { NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { inviteUserToCognito } from '@/lib/auth-service';
-import { getCurrentUser } from '@/lib/session';
+import { NextResponse } from "next/server";
+import prisma from "@/lib/prisma";
+import { inviteUserToCognito } from "@/lib/auth-service";
+import { getCurrentUser } from "@/lib/session";
+import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function POST(req: Request) {
   const user = await getCurrentUser();
-  if (!user || (user.role !== 'TENANT_ADMIN' && user.role !== 'PLATFORM_ADMIN')) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+  if (
+    !user ||
+    (user.role !== "TENANT_ADMIN" && user.role !== "PLATFORM_ADMIN")
+  ) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
   try {
     const { email, permissions } = await req.json();
 
     if (!email || !user.tenantId) {
-      return NextResponse.json({ error: 'Email and valid tenant map are required' }, { status: 400 });
+      return NextResponse.json(
+        { error: "Email and valid tenant map are required" },
+        { status: 400 },
+      );
     }
 
     // 1. Invite User to Cognito (sends magic link/temp password)
     // Role usually TEAMMATE for typical invites
-    const cognitoUser = await inviteUserToCognito(email, user.tenantId, 'TEAMMATE');
-    
+    const cognitoUser = await inviteUserToCognito(
+      email,
+      user.tenantId,
+      "TEAMMATE",
+    );
+
     // 2. Save user in database (Assuming SUB or email mapping)
     const newTeammate = await prisma.user.create({
       data: {
         email: email,
         tenantId: user.tenantId,
-        role: 'TEAMMATE',
-      }
+        role: "TEAMMATE",
+      },
     });
 
     // 3. Assign direct ResourcePolicy for specific permissions
@@ -34,11 +46,26 @@ export async function POST(req: Request) {
       await prisma.resourcePolicy.create({
         data: {
           userId: newTeammate.id,
-          resourceType: 'GLOBAL_TENANT', // Or granular to buckets, etc.
+          resourceType: "GLOBAL_TENANT", // Or granular to buckets, etc.
           actions: permissions,
-        }
+        },
       });
     }
+
+    logAudit({
+      userId: user.id,
+      action: "USER_INVITED",
+      resource: "User",
+      resourceId: newTeammate.id,
+      status: "SUCCESS",
+      // As `req` is typed as Request, we will cast it or wrap it
+      ipAddress: extractIpFromRequest(req as any),
+      details: {
+        invitedEmail: email,
+        tenantId: user.tenantId,
+        permissions: permissions || [],
+      },
+    });
 
     return NextResponse.json({ teammate: newTeammate });
   } catch (err: any) {
@@ -49,12 +76,12 @@ export async function POST(req: Request) {
 export async function GET() {
   const user = await getCurrentUser();
   if (!user || !user.tenantId) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 403 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
   }
 
   const members = await prisma.user.findMany({
     where: { tenantId: user.tenantId },
-    include: { policies: true, teams: true }
+    include: { policies: true, teams: true },
   });
 
   return NextResponse.json(members);

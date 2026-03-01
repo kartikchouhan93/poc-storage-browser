@@ -42,6 +42,10 @@ export default function TeamDetailPage() {
   const [matrix, setMatrix] = React.useState<Record<string, Record<string, boolean>>>({});
   const [savingPolicies, setSavingPolicies] = React.useState(false);
 
+  // Settings State
+  const [allowedIps, setAllowedIps] = React.useState('');
+  const [savingSettings, setSavingSettings] = React.useState(false);
+
   const ACTIONS = ['READ', 'WRITE', 'DELETE', 'SHARE', 'DOWNLOAD'];
 
   React.useEffect(() => {
@@ -64,6 +68,7 @@ export default function TeamDetailPage() {
            }
         });
         setMatrix(initMatrix);
+        if (data.allowedIps) setAllowedIps(data.allowedIps);
       })
       .catch(console.error);
 
@@ -152,6 +157,28 @@ export default function TeamDetailPage() {
          console.error(e);
      } finally {
          setSavingPolicies(false);
+     }
+  };
+
+  const handleSaveSettings = async () => {
+     setSavingSettings(true);
+     try {
+         const res = await fetch(`/api/tenant/teams/${teamId}`, {
+             method: 'PATCH',
+             headers: { 'Content-Type': 'application/json' },
+             body: JSON.stringify({ allowedIps })
+         });
+         
+         if(res.ok) {
+             alert('Team settings saved successfully.');
+         } else {
+             const err = await res.json();
+             alert(err.error || 'Failed to save settings');
+         }
+     } catch (e) {
+         console.error(e);
+     } finally {
+         setSavingSettings(false);
      }
   };
 
@@ -263,6 +290,9 @@ export default function TeamDetailPage() {
           <TabsTrigger value="permissions" className="gap-2">
              <Shield className="h-4 w-4" /> Permissions
           </TabsTrigger>
+          <TabsTrigger value="settings" className="gap-2">
+             <Shield className="h-4 w-4" /> Security & Settings
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="members" className="space-y-4 bg-white dark:bg-slate-950 p-6 rounded-lg border shadow-sm">
@@ -346,6 +376,33 @@ export default function TeamDetailPage() {
                       ))}
                   </tbody>
                </table>
+           </div>
+        </TabsContent>
+
+        <TabsContent value="settings" className="space-y-6 bg-white dark:bg-slate-950 p-6 rounded-lg border shadow-sm">
+           <div className="flex justify-between items-center mb-6">
+               <div>
+                  <h2 className="text-xl font-semibold">Security & Settings</h2>
+                  <p className="text-sm text-muted-foreground mt-1">Configure advanced settings like IP whitelisting for this team.</p>
+               </div>
+               <Button onClick={handleSaveSettings} disabled={savingSettings}>
+                  {savingSettings ? 'Saving...' : 'Save Settings'}
+               </Button>
+           </div>
+           
+           <div className="space-y-4 max-w-xl">
+               <div>
+                  <label className="text-sm font-medium">IP Whitelist (Optional)</label>
+                  <Input 
+                      value={allowedIps}
+                      onChange={(e) => setAllowedIps(e.target.value)}
+                      placeholder="e.g., 10.0.0.1, 192.168.1.0/24"
+                      className="mt-1"
+                  />
+                  <p className="text-sm text-muted-foreground mt-2">
+                      Comma-separated list of IPs or CIDR blocks. Waitlists restrict access so that only requests originating from these IP addresses can interact with Buckets and Files.
+                  </p>
+               </div>
            </div>
         </TabsContent>
       </Tabs>

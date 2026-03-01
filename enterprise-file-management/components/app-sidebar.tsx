@@ -245,17 +245,23 @@ export function AppSidebar({ serverUser }: { serverUser?: SidebarUser }) {
                   </div>
                 </DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <User className="mr-2 h-4 w-4" />
-                  Profile
+                <DropdownMenuItem asChild>
+                  <Link href="/settings" className="cursor-pointer">
+                    <User className="mr-2 h-4 w-4" />
+                    Profile
+                  </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Shield className="mr-2 h-4 w-4" />
-                  Security
+                <DropdownMenuItem asChild>
+                  <Link href="/settings" className="cursor-pointer">
+                    <Shield className="mr-2 h-4 w-4" />
+                    Security
+                  </Link>
                 </DropdownMenuItem>
-                <DropdownMenuItem>
-                  <Files className="mr-2 h-4 w-4" />
-                  My Files
+                <DropdownMenuItem asChild>
+                  <Link href="/explorer" className="cursor-pointer">
+                    <Files className="mr-2 h-4 w-4" />
+                    My Files
+                  </Link>
                 </DropdownMenuItem>
                 <DropdownMenuSeparator />
                 <div className="flex items-center justify-between px-2 py-1.5">

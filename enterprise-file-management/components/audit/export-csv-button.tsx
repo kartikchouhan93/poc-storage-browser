@@ -16,7 +16,8 @@ export function ExportCsvButton({ logs }: { logs: any[] }) {
       const details = log.details || {};
       const resourceId = log.resourceId || "-";
       const displayResource = details.name || details.key || details.email || resourceId;
-      const bucket = details.bucketName || (details.bucketId ? "S3 Bucket" : log.resource.split(':')[0]);
+      const rawBucket = details.bucketName || (details.bucketId ? "S3 Bucket" : log.resource.split(':')[0]);
+      const bucket = ["Authentication", "System", "Tenant"].includes(rawBucket) ? "-" : rawBucket;
       
       const row = [
         log.action,

@@ -14,20 +14,24 @@ export type AuditAction =
   | "TEAM_DELETED"
   | "TEAM_MEMBER_ADDED"
   | "TEAM_MEMBER_REMOVED"
+  | "TEAM_POLICIES_UPDATED"
   | "PERMISSION_ADDED"
   | "PERMISSION_REMOVED"
+  | "USER_INVITED"
   | "LOGIN"
-  | "LOGOUT";
+  | "LOGOUT"
+  | "IP_ACCESS_DENIED";
 
 export type AuditStatus = "SUCCESS" | "FAILED";
 
 export interface AuditParams {
   userId: string;
   action: AuditAction;
-  resource: string;       // e.g. "FileObject", "Team", "ResourcePolicy"
-  resourceId?: string;    // the actual record id (optional)
+  resource: string; // e.g. "FileObject", "Team", "ResourcePolicy"
+  resourceId?: string; // the actual record id (optional)
   details?: Record<string, unknown>;
   status: AuditStatus;
+  ipAddress?: string; // The IP address of the requester
 }
 
 /**
@@ -38,7 +42,8 @@ export interface AuditParams {
  *   void logAudit({ userId, action: "FILE_UPLOAD", resource: "FileObject", details: { name, key }, status: "SUCCESS" });
  */
 export function logAudit(params: AuditParams): void {
-  const { userId, action, resource, resourceId, details, status } = params;
+  const { userId, action, resource, resourceId, details, status, ipAddress } =
+    params;
 
   // Run asynchronously in the background — never blocks the caller
   prisma.auditLog
@@ -49,6 +54,7 @@ export function logAudit(params: AuditParams): void {
         resource: resourceId ? `${resource}:${resourceId}` : resource,
         details: details ? JSON.stringify(details) : null,
         status,
+        ipAddress,
         createdBy: userId,
         updatedBy: userId,
       },

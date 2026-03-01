@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { getCurrentUser } from "@/lib/session";
 import { Role } from "@/lib/generated/prisma/client";
+import { extractIpFromRequest, validateUserIpAccess } from "@/lib/ip-whitelist";
+import { logAudit } from "@/lib/audit";
 
 // ─── GET /api/buckets ──────────────────────────────────────────────────────
 // Returns buckets from DB only (no AWS API call).
@@ -12,6 +14,22 @@ export async function GET(request: NextRequest) {
     const user = await getCurrentUser();
     if (!user)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+    const clientIp = extractIpFromRequest(request);
+    if (!validateUserIpAccess(clientIp, user)) {
+      logAudit({
+        userId: user.id,
+        action: "IP_ACCESS_DENIED",
+        resource: "Bucket",
+        status: "FAILED",
+        ipAddress: clientIp,
+        details: { reason: "IP not whitelisted for team" },
+      });
+      return NextResponse.json(
+        { error: "Forbidden: IP not whitelisted for your team" },
+        { status: 403 },
+      );
+    }
 
     // Parse query params
     const { searchParams } = new URL(request.url);
@@ -32,8 +50,8 @@ export async function GET(request: NextRequest) {
       // TEAMMATE — collect ALL policies from both direct assignments and team memberships
       const allPolicies: any[] = [
         ...(user.policies || []),
-        ...((user as any).teams || []).flatMap((membership: any) =>
-          membership.team?.policies || []
+        ...((user as any).teams || []).flatMap(
+          (membership: any) => membership.team?.policies || [],
         ),
       ];
 
@@ -145,6 +163,22 @@ export async function POST(request: NextRequest) {
     if (!user)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+    const clientIp = extractIpFromRequest(request);
+    if (!validateUserIpAccess(clientIp, user)) {
+      logAudit({
+        userId: user.id,
+        action: "IP_ACCESS_DENIED",
+        resource: "Bucket",
+        status: "FAILED",
+        ipAddress: clientIp,
+        details: { reason: "IP not whitelisted for team" },
+      });
+      return NextResponse.json(
+        { error: "Forbidden: IP not whitelisted for your team" },
+        { status: 403 },
+      );
+    }
+
     // Only admins can create buckets
     if (user.role !== Role.PLATFORM_ADMIN && user.role !== Role.TENANT_ADMIN) {
       return NextResponse.json(
@@ -208,9 +242,10 @@ export async function POST(request: NextRequest) {
       .toLowerCase()
       .replace(/[^a-z0-9-]/g, "-");
     const rawBucketSuffix = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+    const randomSuffix = Math.random().toString(36).substring(2, 8);
     const finalBucketName = isExisting
       ? name
-      : `fms-${rawTenantName}-bucket-${rawBucketSuffix}`;
+      : `fms-${rawTenantName}-bucket-${rawBucketSuffix}-${randomSuffix}`;
 
     const existingBucket = await prisma.bucket.findFirst({
       where: { name: finalBucketName },

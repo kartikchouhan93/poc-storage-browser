@@ -5,6 +5,7 @@ import { CompleteMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { checkPermission } from "@/lib/rbac";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function POST(request: NextRequest) {
   try {
@@ -117,10 +118,14 @@ export async function POST(request: NextRequest) {
       resource: "FileObject",
       resourceId: fileRecord.id,
       status: "SUCCESS",
+      ipAddress: extractIpFromRequest(request),
       details: { bucketId: bucket.id, key, size },
     });
 
-    return NextResponse.json({ status: "success", file: fileRecord });
+    return NextResponse.json({
+      status: "success",
+      file: { ...fileRecord, size: Number(fileRecord.size) || 0 },
+    });
   } catch (error) {
     console.error("Complete Multipart error:", error);
     return NextResponse.json(

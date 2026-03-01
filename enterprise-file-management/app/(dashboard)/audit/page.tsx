@@ -45,6 +45,7 @@ import { getAuditLogs } from "@/app/actions/audit";
 import { AuditLog } from "@/lib/generated/prisma/client";
 import { AuditFilters } from "@/components/audit/audit-filters";
 import { ExportCsvButton } from "@/components/audit/export-csv-button";
+import { AuditTable } from "@/components/audit/audit-table";
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -78,8 +79,10 @@ export default async function AuditPage(props: {
   const searchParams = props.searchParams ? await props.searchParams : {};
   const action = typeof searchParams.action === 'string' ? searchParams.action : undefined;
   const timeRange = typeof searchParams.timeRange === 'string' ? searchParams.timeRange : undefined;
+  const dateFrom = typeof searchParams.dateFrom === 'string' ? searchParams.dateFrom : undefined;
+  const dateTo = typeof searchParams.dateTo === 'string' ? searchParams.dateTo : undefined;
 
-  const result = await getAuditLogs({ action, timeRange });
+  const result = await getAuditLogs({ action, timeRange, dateFrom, dateTo });
   const logs = result.success ? (result.data as any[]) : [];
 
   return (
@@ -115,116 +118,7 @@ export default async function AuditPage(props: {
                 <ExportCsvButton logs={logs} />
               </div>
 
-              <div className="rounded-lg border overflow-hidden">
-                <Table>
-                  <TableHeader>
-                    <TableRow className="hover:bg-transparent">
-                      <TableHead>Action</TableHead>
-                      <TableHead>User</TableHead>
-                      <TableHead className="hidden md:table-cell">
-                        File
-                      </TableHead>
-                      <TableHead className="hidden lg:table-cell">
-                        Bucket
-                      </TableHead>
-                      <TableHead className="hidden lg:table-cell">
-                        IP Address
-                      </TableHead>
-                      <TableHead>Timestamp</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {logs.map((log) => {
-                      // Map standardized DB action names to our icon keys
-                      // e.g., FILE_UPLOAD -> upload, FOLDER_CREATE -> create_bucket, TEAM_MEMBER_ADDED -> invite_user
-                      let iconKey = "view";
-                      const action = log.action.toLowerCase();
-
-                      if (action.includes("upload")) iconKey = "upload";
-                      else if (action.includes("download"))
-                        iconKey = "download";
-                      else if (
-                        action.includes("delete") ||
-                        action.includes("remove")
-                      )
-                        iconKey = "delete";
-                      else if (
-                        action.includes("share") ||
-                        action.includes("permission")
-                      )
-                        iconKey = "share";
-                      else if (action.includes("create"))
-                        iconKey = "create_bucket";
-                      else if (
-                        action.includes("team") ||
-                        action.includes("login")
-                      )
-                        iconKey = "invite_user";
-
-                      const Icon = actionIcons[iconKey] || Eye;
-
-                      const details = (log.details as any) || {};
-                      const resourceId = log.resourceId || "-";
-                      const displayResource =
-                        details.name ||
-                        details.key ||
-                        details.email ||
-                        resourceId;
-
-                      return (
-                        <TableRow key={log.id}>
-                          <TableCell>
-                            <Badge
-                              variant="secondary"
-                              className={`gap-1 capitalize ${
-                                actionColors[iconKey] || actionColors["view"]
-                              }`}
-                            >
-                              <Icon className="h-3 w-3" />
-                              {log.action.replace(/_/g, " ")}
-                            </Badge>
-                          </TableCell>
-                          <TableCell>
-                            <div>
-                              <p className="text-sm font-medium">
-                                {log.user?.name || "Unknown"}
-                              </p>
-                              <p className="text-xs text-muted-foreground">
-                                {log.user?.email || "N/A"}
-                              </p>
-                            </div>
-                          </TableCell>
-                          <TableCell
-                            className="hidden md:table-cell text-sm text-muted-foreground max-w-[200px] truncate"
-                            title={displayResource}
-                          >
-                            {displayResource}
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
-                            {details.bucketName || (details.bucketId ? "S3 Bucket" : log.resource.split(':')[0])}
-                          </TableCell>
-                          <TableCell className="hidden lg:table-cell text-sm text-muted-foreground font-mono text-xs">
-                            {details.ip || "System"}
-                          </TableCell>
-                          <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
-                            {formatDateTime(log.createdAt.toISOString())}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                    {logs.length === 0 && (
-                      <TableRow>
-                        <TableCell
-                          colSpan={6}
-                          className="text-center py-8 text-muted-foreground"
-                        >
-                          No audit logs found.
-                        </TableCell>
-                      </TableRow>
-                    )}
-                  </TableBody>
-                </Table>
-              </div>
+              <AuditTable logs={logs} />
            
         </div>
       </div>

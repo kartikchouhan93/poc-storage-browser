@@ -34,6 +34,7 @@ export default function TeamsPage() {
   const [teams, setTeams] = React.useState<any[]>([]);
   const [isModalOpen, setIsModalOpen] = React.useState(false);
   const [teamName, setTeamName] = React.useState("");
+  const [allowedIps, setAllowedIps] = React.useState("");
   const [loading, setLoading] = React.useState(false);
   const [error, setError] = React.useState("");
   const [searchTerm, setSearchTerm] = React.useState("");
@@ -56,13 +57,14 @@ export default function TeamsPage() {
       const res = await fetch("/api/tenant/teams", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: teamName }),
+        body: JSON.stringify({ name: teamName, allowedIps: allowedIps || undefined }),
       });
       if (res.ok) {
         const newTeam = await res.json();
         setTeams([newTeam, ...teams]);
         setIsModalOpen(false);
         setTeamName("");
+        setAllowedIps("");
         router.push(`/teams/${newTeam.id}`);
       } else {
         const err = await res.json();
@@ -200,6 +202,19 @@ export default function TeamsPage() {
                   if (e.key === "Enter") handleCreateTeam();
                 }}
               />
+            </div>
+            <div>
+              <label className="text-sm font-medium">Allowed IPs (Optional)</label>
+              <Input
+                value={allowedIps}
+                onChange={(e) => setAllowedIps(e.target.value)}
+                placeholder="e.g., 10.0.0.1, 192.168.1.0/24"
+                className="mt-1"
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateTeam();
+                }}
+              />
+              <p className="text-xs text-muted-foreground mt-1">Comma-separated IPs or CIDR blocks.</p>
             </div>
             {error && (
               <p className="text-sm text-red-500 font-medium">{error}</p>

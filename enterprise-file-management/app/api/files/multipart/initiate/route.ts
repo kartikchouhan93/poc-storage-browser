@@ -5,6 +5,7 @@ import { CreateMultipartUploadCommand } from "@aws-sdk/client-s3";
 import { checkPermission } from "@/lib/rbac";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function POST(request: NextRequest) {
   try {
@@ -86,6 +87,7 @@ export async function POST(request: NextRequest) {
       action: "MULTIPART_UPLOAD_INITIATED",
       resource: "FileObject",
       status: "SUCCESS",
+      ipAddress: extractIpFromRequest(request),
       details: { bucketId: bucket.id, key },
     });
 

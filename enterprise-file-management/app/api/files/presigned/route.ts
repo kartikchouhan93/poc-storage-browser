@@ -7,6 +7,7 @@ import { decrypt } from "@/lib/encryption";
 import { checkPermission } from "@/lib/rbac";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromRequest } from "@/lib/ip-whitelist";
 
 export async function GET(request: NextRequest) {
   try {
@@ -115,7 +116,6 @@ export async function GET(request: NextRequest) {
 
     const url = await getSignedUrl(s3, command, { expiresIn: 3600 });
 
-    // Log audit asynchronously
     logAudit({
       userId: user.id,
       action:
@@ -126,6 +126,7 @@ export async function GET(request: NextRequest) {
             : "FILE_UPLOAD_INITIATED",
       resource: "FileObject",
       status: "SUCCESS",
+      ipAddress: extractIpFromRequest(request),
       details: { bucketId: bucket.id, key, action },
     });
 

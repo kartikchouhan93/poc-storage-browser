@@ -5,9 +5,11 @@ import { Loader2, Minimize2, Maximize2, X, File, CheckCircle, AlertCircle } from
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useDownload } from "@/components/providers/download-provider"
+import { useAuth } from "@/components/providers/AuthProvider"
 import { cn } from "@/lib/utils"
 
 export function GlobalDownloadIndicator() {
+    const { user } = useAuth()
     const { files, isDownloading } = useDownload()
     const [isMinimized, setIsMinimized] = React.useState(false)
     const [isOpen, setIsOpen] = React.useState(false)
@@ -20,7 +22,7 @@ export function GlobalDownloadIndicator() {
 
     const activeFiles = files.filter(f => f.status === 'downloading' || f.status === 'pending')
 
-    if (files.length === 0 || !isOpen) return null
+    if (!user || files.length === 0 || !isOpen) return null
 
     const progressSum = files.reduce((acc, f) => acc + f.progress, 0)
     const totalProgress = files.length > 0 ? Math.round(progressSum / files.length) : 0
