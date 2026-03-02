@@ -168,7 +168,7 @@ export default function LoginPage() {
             <Card className="w-full max-w-md shadow-lg">
                 <CardHeader className="space-y-1">
                     <CardTitle className="text-2xl font-bold tracking-tight text-center">
-                        {mode === 'login' && 'FMS Login'}
+                        {mode === 'login' && 'CloudVault Login'}
                         {mode === 'forgot_password' && 'Reset Password'}
                         {mode === 'confirm_password' && 'Confirm New Password'}
                     </CardTitle>
