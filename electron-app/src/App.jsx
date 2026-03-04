@@ -10,6 +10,7 @@ import { AuthProvider, useAuth } from "./contexts/AuthContext";
 import TopBar from "./components/TopBar";
 import Sidebar from "./components/Sidebar";
 import TransferStatus from "./components/TransferStatus";
+import DashboardPage from "./pages/DashboardPage";
 import BucketsPage from "./pages/BucketsPage";
 import FilesPage from "./pages/FilesPage";
 import SyncPage from "./pages/SyncPage";
@@ -37,7 +38,8 @@ const Layout = () => {
         <Sidebar />
         <div className="flex-1 overflow-hidden relative bg-white sm:rounded-tl-2xl border border-slate-200 mr-3 mb-3">
           <Routes>
-            <Route path="/" element={<BucketsPage />} />
+            <Route path="/" element={<DashboardPage />} />
+            <Route path="/buckets" element={<BucketsPage />} />
             <Route path="/files/:bucketId" element={<FilesPage />} />
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/sync/:configId" element={<SyncHistoryPage />} />

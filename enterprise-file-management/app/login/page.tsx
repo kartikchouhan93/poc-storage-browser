@@ -7,6 +7,7 @@ import { Input } from '@/components/ui/input';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription, CardFooter } from '@/components/ui/card';
 import { Label } from '@/components/ui/label';
 import { useAuth } from '@/components/providers/AuthProvider';
+import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
     const { login } = useAuth();
@@ -20,6 +21,8 @@ export default function LoginPage() {
     const [session, setSession] = React.useState('');
     const [mode, setMode] = React.useState<'login' | 'forgot_password' | 'confirm_password'>('login');
     const [resetCode, setResetCode] = React.useState('');
+    const [showPassword, setShowPassword] = React.useState(false);
+    const [showNewPassword, setShowNewPassword] = React.useState(false);
     const router = useRouter();
 
     const handleLogin = async (e: React.FormEvent) => {
@@ -217,28 +220,52 @@ export default function LoginPage() {
                                         Forgot Password?
                                     </Button>
                                 </div>
-                                <Input 
-                                    id="password" 
-                                    type="password" 
-                                    placeholder="••••••••" 
-                                    value={password} 
-                                    onChange={e => setPassword(e.target.value)} 
-                                    required 
-                                />
+                                <div className="relative">
+                                    <Input 
+                                        id="password" 
+                                        type={showPassword ? 'text' : 'password'} 
+                                        placeholder="••••••••" 
+                                        value={password} 
+                                        onChange={e => setPassword(e.target.value)} 
+                                        required 
+                                        className="pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowPassword(v => !v)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                        tabIndex={-1}
+                                        aria-label={showPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                        {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
                             </div>
                         )}
 
                         {mode === 'login' && requiresNewPassword && (
                             <div className="space-y-2">
                                 <Label htmlFor="newPassword">New Password Required</Label>
-                                <Input 
-                                    id="newPassword" 
-                                    type="password" 
-                                    placeholder="Enter new password" 
-                                    value={newPassword} 
-                                    onChange={e => setNewPassword(e.target.value)} 
-                                    required 
-                                />
+                                <div className="relative">
+                                    <Input 
+                                        id="newPassword" 
+                                        type={showNewPassword ? 'text' : 'password'} 
+                                        placeholder="Enter new password" 
+                                        value={newPassword} 
+                                        onChange={e => setNewPassword(e.target.value)} 
+                                        required 
+                                        className="pr-10"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowNewPassword(v => !v)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                        tabIndex={-1}
+                                        aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                                    >
+                                        {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
                                 <p className="text-xs text-muted-foreground">
                                     Your account requires you to set a new password.
                                 </p>
@@ -260,14 +287,26 @@ export default function LoginPage() {
                                 </div>
                                 <div className="space-y-2">
                                     <Label htmlFor="newResetPassword">New Password</Label>
-                                    <Input 
-                                        id="newResetPassword" 
-                                        type="password" 
-                                        placeholder="Enter new password" 
-                                        value={newPassword} 
-                                        onChange={e => setNewPassword(e.target.value)} 
-                                        required 
-                                    />
+                                    <div className="relative">
+                                        <Input 
+                                            id="newResetPassword" 
+                                            type={showNewPassword ? 'text' : 'password'} 
+                                            placeholder="Enter new password" 
+                                            value={newPassword} 
+                                            onChange={e => setNewPassword(e.target.value)} 
+                                            required 
+                                            className="pr-10"
+                                        />
+                                        <button
+                                            type="button"
+                                            onClick={() => setShowNewPassword(v => !v)}
+                                            className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground transition-colors"
+                                            tabIndex={-1}
+                                            aria-label={showNewPassword ? 'Hide password' : 'Show password'}
+                                        >
+                                            {showNewPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                                        </button>
+                                    </div>
                                 </div>
                             </>
                         )}

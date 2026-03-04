@@ -56,10 +56,11 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
         return backend.status.getTransfers();
     });
 
-    // 4. Database
-    ipcMain.handle('db-query', async (event, { text, params }) => {
+    // 4. Database (accepts both { sql, params } from preload and legacy { text, params })
+    ipcMain.handle('db-query', async (event, args) => {
         try {
-            const result = await backend.db.query(text, params);
+            const queryText = args.sql || args.text;
+            const result = await backend.db.query(queryText, args.params);
             return { rows: result.rows, rowCount: result.rowCount };
         } catch (error) {
             throw error;
