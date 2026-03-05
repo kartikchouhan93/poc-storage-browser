@@ -26,12 +26,26 @@ export async function GET(request: NextRequest) {
     orderBy: { createdAt: 'desc' },
     select: {
       id: true, name: true, permissions: true,
-      isActive: true, lastUsedAt: true, createdAt: true,
+      isActive: true, lastUsedAt: true, lastHeartbeatAt: true, createdAt: true,
       user: { select: { email: true, name: true } },
     },
   });
 
-  return NextResponse.json({ data: bots });
+  // Calculate online/offline status based on lastHeartbeatAt
+  // Online = heartbeat within last 2 minutes
+  const now = new Date();
+  const botsWithStatus = bots.map(bot => {
+    const isOnline = bot.lastHeartbeatAt 
+      ? (now.getTime() - new Date(bot.lastHeartbeatAt).getTime()) < 2 * 60 * 1000
+      : false;
+    
+    return {
+      ...bot,
+      connectionStatus: isOnline ? 'online' : 'offline',
+    };
+  });
+
+  return NextResponse.json({ data: botsWithStatus });
 }
 
 // ── POST /api/bot ─────────────────────────────────────────────────────────────
