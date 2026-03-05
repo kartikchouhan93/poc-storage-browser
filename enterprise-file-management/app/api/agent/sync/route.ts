@@ -13,19 +13,34 @@
 import { NextRequest, NextResponse } from 'next/server';
 import prisma from '@/lib/prisma';
 import { verifyToken } from '@/lib/token';
+import { jwtVerify } from 'jose';
 import { Role } from '@/lib/generated/prisma/client';
+
+const BOT_JWT_SECRET = new TextEncoder().encode(
+  process.env.BOT_JWT_SECRET || process.env.ENCRYPTION_KEY || 'bot-secret-change-me',
+);
 
 export async function GET(request: NextRequest) {
     try {
         const token = request.headers.get('Authorization')?.split(' ')[1];
         if (!token) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
 
-        const payload = await verifyToken(token);
-        // @ts-ignore
-        if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+        // Try bot token (HS256) first
+        let userEmail: string | null = null;
+        try {
+            const { payload } = await jwtVerify(token, BOT_JWT_SECRET);
+            if (payload.type === 'bot') {
+                userEmail = payload.email as string;
+            }
+        } catch {}
 
-        // @ts-ignore
-        const userEmail = payload.email;
+        // Fall back to Cognito token
+        if (!userEmail) {
+            const payload = await verifyToken(token);
+            if (!payload) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+            userEmail = payload.email as string;
+        }
+
         if (!userEmail) return NextResponse.json({ error: 'Invalid token payload: missing email' }, { status: 401 });
 
         const user = await prisma.user.findUnique({ where: { email: userEmail as string } });

@@ -47,7 +47,7 @@ function generateKeyPair() {
   store.set('botId', '');
 
   console.log('[BotAuth] New Ed25519 key pair generated and stored');
-  return publicKey;
+  return publicKey; // standard PEM with newlines — safe to paste
 }
 
 function getPublicKey() {
@@ -80,6 +80,10 @@ function signClaim(botId) {
   const privateKeyPem = getStore().get('privateKeyPem');
   if (!privateKeyPem) throw new Error('No private key found — generate a key pair first');
 
+  const storedBotId = getStore().get('botId');
+  console.log('[BotAuth] signClaim — botId arg:', botId, '| stored botId:', storedBotId);
+  console.log('[BotAuth] publicKey (first 60):', (getStore().get('publicKeyPem') || '').substring(0, 60));
+
   const header  = Buffer.from(JSON.stringify({ alg: 'EdDSA', typ: 'JWT' })).toString('base64url');
   const now     = Math.floor(Date.now() / 1000);
   const payload = Buffer.from(JSON.stringify({
@@ -92,15 +96,24 @@ function signClaim(botId) {
   const privateKey   = crypto.createPrivateKey(privateKeyPem);
   const signature    = crypto.sign(null, Buffer.from(signingInput), privateKey).toString('base64url');
 
-  return `${signingInput}.${signature}`;
+  const jwt = `${signingInput}.${signature}`;
+  console.log('[BotAuth] signed JWT (first 80):', jwt.substring(0, 80));
+  return jwt;
 }
 
 // ── Handshake ─────────────────────────────────────────────────────────────────
 
 async function performHandshake(botId) {
   const signedJwt = signClaim(botId);
-  const response  = await axios.post(`${API_URL}/api/bot/verify`, { botId, signedJwt });
-  return response.data;
+  console.log('[BotAuth] performHandshake — posting to:', `${API_URL}/api/bot/verify`);
+  try {
+    const response  = await axios.post(`${API_URL}/api/bot/verify`, { botId, signedJwt });
+    return response.data;
+  } catch (err) {
+    const body = err.response?.data;
+    console.error('[BotAuth] handshake HTTP error:', err.response?.status, JSON.stringify(body));
+    throw new Error(body?.error || err.message);
+  }
 }
 
 async function refreshBotTokens(refreshToken) {

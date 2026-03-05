@@ -1,6 +1,19 @@
 import { NextResponse } from "next/server";
 import type { NextRequest } from "next/server";
+import { jwtVerify } from "jose";
 import { verifyToken } from "@/lib/token";
+
+const BOT_JWT_SECRET = new TextEncoder().encode(
+  process.env.BOT_JWT_SECRET || process.env.ENCRYPTION_KEY || "bot-secret-change-me",
+);
+
+async function verifyBotToken(token: string) {
+  try {
+    const { payload } = await jwtVerify(token, BOT_JWT_SECRET);
+    if (payload.type === "bot") return payload;
+  } catch {}
+  return null;
+}
 
 // Paths that don't require authentication
 const publicPaths = [
@@ -19,6 +32,12 @@ const publicPaths = [
   "/api/shares",
   "/file/share",
   "/ip-blocked",
+  // Bot auth — these routes do their own token validation (EdDSA / BOT_JWT_SECRET)
+  "/api/bot/verify",
+  "/api/bot/refresh",
+  "/api/heartbeat",
+  "/api/auth/agent-sso",
+  "/api/auth/token-exchange",
 ];
 
 export async function proxy(request: NextRequest) {
@@ -55,6 +74,18 @@ export async function proxy(request: NextRequest) {
     }
     // If it's a page, redirect to login
     return NextResponse.redirect(new URL("/login", request.url));
+  }
+
+  // Try bot token first (HS256) — fast path, no network call
+  const botPayload = await verifyBotToken(token);
+  if (botPayload) {
+    const requestHeaders = new Headers(request.headers);
+    if (!authHeader) requestHeaders.set("Authorization", `Bearer ${token}`);
+    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    response.headers.set("x-user-id", botPayload.sub as string);
+    response.headers.set("x-user-role", "BOT");
+    response.headers.set("x-user-tenant", (botPayload.tenantId as string) ?? "");
+    return response;
   }
 
   const payload = await verifyToken(token);

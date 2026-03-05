@@ -179,11 +179,12 @@ export const AuthProvider = ({ children }) => {
                 return { success: false, error: result.error || 'Handshake failed' };
             }
             setToken(result.accessToken);
-            const decoded = _decodeUser(result.accessToken);
-            setUser({ ...decoded, email: result.email || decoded.email });
+            // Bot token is HS256 — decode manually without relying on Cognito payload shape
+            setUser({ email: result.email, username: result.email, name: result.email?.split('@')[0] || 'Bot', sub: botId });
             window.electronAPI.initSync?.(result.accessToken);
-            try { await window.electronAPI.syncBucketsNow?.(); } catch {}
             navigate('/');
+            // Bucket sync in background — don't block or throw
+            window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bot bucket sync failed (non-fatal):', e));
             return { success: true };
         } catch (err) {
             return { success: false, error: err.message || 'Bot login failed' };

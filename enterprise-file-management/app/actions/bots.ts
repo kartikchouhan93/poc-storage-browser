@@ -44,6 +44,20 @@ export async function registerBot(formData: FormData) {
     return { success: false, error: 'Name and public key are required' }
   }
 
+  // Normalize PEM — handle textarea stripping newlines or \n literals
+  function normalizePem(pem: string): string {
+    let cleaned = pem.replace(/\\n/g, '\n').replace(/\r\n/g, '\n').trim()
+    const m = cleaned.match(/^(-----BEGIN [^-]+-----)([\s\S]+?)(-----END [^-]+-----)$/)
+    if (m) {
+      const body    = m[2].replace(/\s+/g, '')
+      const wrapped = body.match(/.{1,64}/g)!.join('\n')
+      cleaned = `${m[1]}\n${wrapped}\n${m[3]}`
+    }
+    return cleaned
+  }
+
+  const normalizedKey = normalizePem(publicKey)
+
   const permissions = permsRaw
     ? permsRaw.split(',').map(p => p.trim()).filter(Boolean)
     : ['READ', 'SYNC']
@@ -52,7 +66,7 @@ export async function registerBot(formData: FormData) {
     const bot = await prisma.botIdentity.create({
       data: {
         name,
-        publicKey,
+        publicKey: normalizedKey,
         permissions,
         userId:   user.id,
         tenantId: user.tenantId as string,
