@@ -14,7 +14,7 @@ const authManager = require('./auth');
 const botAuth = require('./bot-auth');
 
 const API_URL      = process.env.ENTERPRISE_URL || 'http://localhost:3000';
-const INTERVAL_MS  = 5 * 60 * 1000; // 5 minutes
+const INTERVAL_MS  = 30 * 1000; // 30 seconds
 
 class HeartbeatManager {
   constructor() {
@@ -34,7 +34,10 @@ class HeartbeatManager {
     this._onExpired = onExpired;
     this._timer = setInterval(() => this._beat(), INTERVAL_MS);
     if (this._timer.unref) this._timer.unref();
-    console.log(`[Heartbeat] Started (mode=${authMode}, interval=5min)`);
+    console.log(`[Heartbeat] Started (mode=${authMode}, interval=30s)`);
+    
+    // Send first heartbeat immediately
+    this._beat();
   }
 
   stop() {

@@ -76,6 +76,10 @@ class AuthManager {
     store.set('username',     '');
     store.set('email',        '');
     console.log('[AuthManager] Logged out — store cleared');
+    
+    // Clear AWS credential cache
+    const credentialManager = require('./aws-credentials');
+    credentialManager.clear();
   }
 
   /**
@@ -92,6 +96,11 @@ class AuthManager {
       username:     store.get('username'),
       email:        store.get('email'),
     };
+  }
+
+  /** Get the current token (alias for backward compatibility) */
+  getToken() {
+    return store.get('idToken') || null;
   }
 
   /** Decode the IdToken JWT and check if it is expired. */

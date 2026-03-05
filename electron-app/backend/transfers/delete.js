@@ -1,23 +1,5 @@
 const { S3Client, DeleteObjectCommand, ListObjectsV2Command, DeleteObjectsCommand } = require('@aws-sdk/client-s3');
-const { createDecipheriv } = require("crypto");
 const database = require('../database');
-
-const ENCRYPTION_KEY = Buffer.from(process.env.ENCRYPTION_KEY || "", "hex");
-const ALGORITHM = "aes-256-gcm";
-
-function decrypt(text) {
-    if (!text) return text;
-    const parts = text.split(":");
-    if (parts.length !== 3) return text;
-    const [ivHex, encryptedHex, authTagHex] = parts;
-    const iv = Buffer.from(ivHex, "hex");
-    const authTag = Buffer.from(authTagHex, "hex");
-    const decipher = createDecipheriv(ALGORITHM, ENCRYPTION_KEY, iv);
-    decipher.setAuthTag(authTag);
-    let decrypted = decipher.update(encryptedHex, "hex", "utf8");
-    decrypted += decipher.final("utf8");
-    return decrypted;
-}
 
 class DeleteManager {
     async deleteFromS3(bucketId, s3Key) {
@@ -73,21 +55,23 @@ class DeleteManager {
     }
 
     async _getS3Client(bucketId) {
+        const credentialManager = require('../aws-credentials');
+        
         const dbRes = await database.query(`
-            SELECT a."awsAccessKeyId", a."awsSecretAccessKey", b.region 
-            FROM "Bucket" b 
-            JOIN "Account" a ON b."accountId" = a.id 
-            WHERE b.id = $1
+            SELECT b.region FROM "Bucket" b WHERE b.id = $1
         `, [bucketId]);
 
         if (dbRes.rows.length === 0) throw new Error("Bucket not found");
-        const data = dbRes.rows[0];
+        const { region } = dbRes.rows[0];
+        
+        const credentials = await credentialManager.getCredentialsForBucket(bucketId);
 
         return new S3Client({
-            region: data.region,
+            region: credentials.region || region,
             credentials: {
-                accessKeyId: decrypt(data.awsAccessKeyId),
-                secretAccessKey: decrypt(data.awsSecretAccessKey),
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
             },
         });
     }
