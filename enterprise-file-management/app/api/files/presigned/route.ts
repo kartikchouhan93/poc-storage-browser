@@ -71,7 +71,7 @@ export async function GET(request: NextRequest) {
 
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
     if (!bucket)
@@ -87,7 +87,7 @@ export async function GET(request: NextRequest) {
 
     // Check Permission
     const hasAccess = await checkPermission(user, requiredPermission, {
-      tenantId: bucket.account.tenantId,
+      tenantId: bucket.tenantId,
       resourceType: "bucket",
       resourceId: bucket.id,
     });
@@ -97,6 +97,7 @@ export async function GET(request: NextRequest) {
     }
 
     const account = bucket.account;
+    const awsAccount = bucket.awsAccount;
 
     // Determine Key
     let key: string = paramKey || (name as string);
@@ -112,7 +113,7 @@ export async function GET(request: NextRequest) {
     }
 
     // Support fallback to environment AWS_PROFILE credentials
-    const s3 = getS3Client(account, bucket.region);
+    const s3 = await getS3Client(account, bucket.region, awsAccount);
 
     let command;
     if (action === "download" || action === "read") {
@@ -147,7 +148,7 @@ export async function GET(request: NextRequest) {
       resource: "FileObject",
       status: "SUCCESS",
       ipAddress: extractIpFromRequest(request),
-      details: { bucketId: bucket.id, key, action },
+      details: { bucketId: bucket.id, bucketName: bucket.name, key, action },
     });
 
     return NextResponse.json({ url, key });

@@ -11,6 +11,7 @@ import {
   HardDrive,
   Link2,
   Plus,
+  RefreshCw,
   Share2,
   Trash2,
   Upload,
@@ -45,6 +46,7 @@ import { Skeleton } from "@/components/ui/skeleton"
 import { formatBytes, formatDateTime } from "@/lib/mock-data"
 import { SearchCommandDialog } from "@/components/search-command"
 import { getAuditLogs, getDashboardStats, type DashboardStats } from "@/app/actions/audit"
+import * as React from "react"
 import { useEffect, useState } from "react"
 import { useAuth } from "@/components/providers/AuthProvider"
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
@@ -72,6 +74,25 @@ export default function OverviewPage() {
   const [timeRange, setTimeRange] = useState<string>("all")
   const [dateRange, setDateRange] = useState<DateRange | undefined>()
   const { toast } = useToast()
+
+  const [refreshing, setRefreshing] = React.useState(false)
+
+  const fetchData = React.useCallback((filters?: any) => {
+    setStatsLoading(true)
+    getAuditLogs().then((res) => {
+      if (res.success && res.data) setRecentLogs(res.data.slice(0, 6))
+    })
+    const statsFilters = filters || { timeRange }
+    if (timeRange === "custom" && dateRange?.from && dateRange?.to) {
+      statsFilters.dateFrom = dateRange.from.toISOString()
+      statsFilters.dateTo = dateRange.to.toISOString()
+    }
+    getDashboardStats(statsFilters).then((res) => {
+      if (res.success) setDashboardStats(res.data)
+      setStatsLoading(false)
+      setRefreshing(false)
+    })
+  }, [timeRange, dateRange])
 
   useEffect(() => {
     getAuditLogs().then((res) => {
@@ -171,6 +192,16 @@ export default function OverviewPage() {
         </div>
 
         <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => { setRefreshing(true); fetchData() }}
+            disabled={refreshing || statsLoading}
+            title="Refresh"
+          >
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </Button>
+
           {timeRange === "custom" && (
             <Popover>
               <PopoverTrigger asChild>

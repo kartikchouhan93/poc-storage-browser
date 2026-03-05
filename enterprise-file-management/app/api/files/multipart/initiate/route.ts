@@ -32,25 +32,25 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
 
     const body = await request.json();
-    const { bucketId, name, type, parentId } = body;
+    const { bucketId, name, type, parentId, fileHash } = body;
 
-    if (!bucketId || !name) {
+    if (!bucketId || !name || !fileHash) {
       return NextResponse.json(
-        { error: "Bucket ID and Name are required" },
+        { error: "Bucket ID, Name, and FileHash are required" },
         { status: 400 },
       );
     }
 
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
     if (!bucket)
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
     const hasAccess = await checkPermission(user, "WRITE", {
-      tenantId: bucket.account.tenantId,
+      tenantId: bucket.tenantId,
       resourceType: "bucket",
       resourceId: bucket.id,
     });
@@ -60,6 +60,7 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
+    const awsAccount = bucket.awsAccount;
 
     let key = name;
     if (parentId) {
@@ -72,7 +73,7 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    const s3 = getS3Client(account, bucket.region);
+    const s3 = await getS3Client(account, bucket.region, awsAccount);
 
     const command = new CreateMultipartUploadCommand({
       Bucket: bucket.name,
@@ -82,13 +83,34 @@ export async function POST(request: NextRequest) {
 
     const { UploadId } = await s3.send(command);
 
+    if (UploadId) {
+      // Track this upload in the database using upsert in case a zombie record exists
+      await prisma.multipartUpload.upsert({
+        where: {
+          fileHash_userId: { fileHash, userId: user.id },
+        },
+        create: {
+          fileHash,
+          uploadId: UploadId,
+          bucketId: bucket.id,
+          key,
+          userId: user.id,
+        },
+        update: {
+          uploadId: UploadId,
+          bucketId: bucket.id,
+          key,
+        },
+      });
+    }
+
     logAudit({
       userId: user.id,
       action: "MULTIPART_UPLOAD_INITIATED",
       resource: "FileObject",
       status: "SUCCESS",
       ipAddress: extractIpFromRequest(request),
-      details: { bucketId: bucket.id, key },
+      details: { bucketId: bucket.id, bucketName: bucket.name, key },
     });
 
     return NextResponse.json({ uploadId: UploadId, key });

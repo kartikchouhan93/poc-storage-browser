@@ -23,9 +23,17 @@ export default function LoginPage() {
     const [resetCode, setResetCode] = React.useState('');
     const [showPassword, setShowPassword] = React.useState(false);
     const [showNewPassword, setShowNewPassword] = React.useState(false);
+    const [resendCooldown, setResendCooldown] = React.useState(0);
     const router = useRouter();
     const searchParams = useSearchParams();
     const redirectAfterLogin = searchParams.get('redirect') || null;
+
+    React.useEffect(() => {
+        if (resendCooldown > 0) {
+            const timer = setTimeout(() => setResendCooldown(prev => prev - 1), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [resendCooldown]);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -110,8 +118,7 @@ export default function LoginPage() {
         }
     };
 
-    const handleForgotPassword = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const sendResetCode = async () => {
         setLoading(true);
         setError('');
         setSuccessMessage('');
@@ -127,6 +134,7 @@ export default function LoginPage() {
             if (res.ok) {
                 setMode('confirm_password');
                 setSuccessMessage('Password reset code sent to your email.');
+                setResendCooldown(60);
             } else {
                 setError(data.error || 'Failed to request password reset');
             }
@@ -135,6 +143,11 @@ export default function LoginPage() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleForgotPassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await sendResetCode();
     };
 
     const handleConfirmPassword = async (e: React.FormEvent) => {
@@ -176,7 +189,7 @@ export default function LoginPage() {
             <Card className="w-full max-w-md shadow-lg">
                 <CardHeader className="space-y-1">
                     <CardTitle className="text-2xl font-bold tracking-tight text-center">
-                        {mode === 'login' && 'FMS Login'}
+                        {mode === 'login' && 'CloudVault Login'}
                         {mode === 'forgot_password' && 'Reset Password'}
                         {mode === 'confirm_password' && 'Confirm New Password'}
                     </CardTitle>
@@ -326,6 +339,18 @@ export default function LoginPage() {
                                 'Confirm Password'
                             )}
                         </Button>
+
+                        {mode === 'confirm_password' && (
+                            <Button 
+                                type="button" 
+                                variant="outline" 
+                                className="w-full mt-2" 
+                                disabled={loading || resendCooldown > 0}
+                                onClick={sendResetCode}
+                            >
+                                {resendCooldown > 0 ? `Resend Code in ${resendCooldown}s` : 'Resend Code'}
+                            </Button>
+                        )}
 
                         {mode !== 'login' && (
                             <Button 

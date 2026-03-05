@@ -34,7 +34,6 @@ export function InviteUserModal({ tenants }: { tenants: TenantItem[] }) {
   const [isLoading, setIsLoading] = useState(false);
 
   async function onSubmit(formData: FormData) {
-    console.log("@@@ formData", formData);
     try {
       setIsLoading(true);
       const result = await inviteUser(formData);

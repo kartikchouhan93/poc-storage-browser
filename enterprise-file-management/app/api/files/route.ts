@@ -191,14 +191,11 @@ export async function POST(request: NextRequest) {
     // 1. Fetch Bucket and Account to get credentials
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
-    if (!bucket || !bucket.account) {
-      return NextResponse.json(
-        { error: "Bucket or associated account not found" },
-        { status: 404 },
-      );
+    if (!bucket) {
+      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     }
 
     const hasAccess = await checkPermission(user, "WRITE", {
@@ -212,7 +209,7 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
-    if (!account.awsAccessKeyId || !account.awsSecretAccessKey) {
+    if (account && (!account.awsAccessKeyId || !account.awsSecretAccessKey)) {
       // NOTE: Removed strict credential blocking here, as `getS3Client` handles fallbacks.
       // We will let S3 SDK attempt to find credentials.
     }
@@ -231,7 +228,7 @@ export async function POST(request: NextRequest) {
     // 3. If it's a folder, create it in S3
     if (isFolder) {
       try {
-        const s3 = getS3Client(account, bucket.region);
+        const s3 = await getS3Client(account, bucket.region, bucket.awsAccount);
 
         // S3 folders are typically represented by a zero-byte object with a trailing slash
         const s3Key = key.endsWith("/") ? key : `${key}/`;
@@ -280,7 +277,7 @@ export async function POST(request: NextRequest) {
           resource: "FileObject",
           resourceId: file.id,
           status: "SUCCESS",
-          details: { bucketId: bucket.id, key, size },
+          details: { bucketId: bucket.id, bucketName: bucket.name, key, size },
         });
       }
     } else {
@@ -306,7 +303,7 @@ export async function POST(request: NextRequest) {
           resource: "FileObject",
           resourceId: file.id,
           status: "SUCCESS",
-          details: { name, bucketId, key },
+          details: { name, bucketId, bucketName: bucket.name, key },
         });
       } else {
         logAudit({
@@ -315,7 +312,7 @@ export async function POST(request: NextRequest) {
           resource: "FileObject",
           resourceId: file.id,
           status: "SUCCESS",
-          details: { bucketId: bucket.id, key, size },
+          details: { bucketId: bucket.id, bucketName: bucket.name, key, size },
         });
       }
     }

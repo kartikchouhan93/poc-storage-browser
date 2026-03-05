@@ -12,7 +12,7 @@ import {
 import { GenericTable } from "@/components/ui/generic-table"
 import { Input } from "@/components/ui/input"
 import { Button } from "@/components/ui/button"
-import { Search, Edit, Trash2, Shield, Eye, CalendarClock } from "lucide-react"
+import { Search, Edit, Trash2, Shield, Eye, CalendarClock, RefreshCw } from "lucide-react"
 import { GenericModal } from "@/components/ui/generic-modal"
 import { Suspense } from "react"
 import { Checkbox } from "@/components/ui/checkbox"
@@ -40,6 +40,7 @@ function SharesPageContent() {
   const [editPassword, setEditPassword] = React.useState("")
   const [removePassword, setRemovePassword] = React.useState(false)
   const [editSaving, setEditSaving] = React.useState(false)
+  const [refreshing, setRefreshing] = React.useState(false)
 
   React.useEffect(() => {
     fetchShares(page)
@@ -48,7 +49,7 @@ function SharesPageContent() {
   const fetchShares = async (currentPage: number) => {
     try {
       setLoading(true)
-      const res = await fetch(`/api/shares?page=${page}&limit=10`)
+      const res = await fetch(`/api/shares?page=${currentPage}&limit=10`)
       if (res.ok) {
         const data = await res.json()
         setShares(data.shares || [])
@@ -58,7 +59,13 @@ function SharesPageContent() {
       console.error("Failed to fetch shares:", err)
     } finally {
       setLoading(false)
+      setRefreshing(false)
     }
+  }
+
+  const handleRefresh = () => {
+    setRefreshing(true)
+    fetchShares(page)
   }
 
   const filteredShares = React.useMemo(() => {
@@ -222,7 +229,10 @@ function SharesPageContent() {
                 spellCheck="false"
               />
             </form>
-            {/* Additional actions could go here, e.g. "Create New Share" if applicable */}
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={refreshing} className="h-9">
+              <RefreshCw className={`mr-2 h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
           </div>
 
           <div className="bg-white dark:bg-slate-950 rounded-lg border shadow-sm">

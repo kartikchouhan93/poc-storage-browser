@@ -10,6 +10,7 @@ datasource db {
 model Tenant {
   id            String       @id @default(cuid())
   name          String
+  isHubTenant   Boolean      @default(false)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   createdBy     String?
@@ -22,6 +23,7 @@ model Tenant {
   objects       FileObject[]
   teams         Team[]
   shares        Share[]
+  awsAccounts   AwsAccount[]
 }
 
 model Account {
@@ -45,14 +47,16 @@ model Bucket {
   id            String       @id @default(cuid())
   name          String
   region        String
-  accountId     String
+  accountId     String?
+  awsAccountId  String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
   createdBy     String?
   updatedBy     String?
   createdByUser User?        @relation("BucketCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User?        @relation("BucketUpdatedBy", fields: [updatedBy], references: [id])
-  account       Account      @relation(fields: [accountId], references: [id])
+  account       Account?     @relation(fields: [accountId], references: [id])
+  awsAccount    AwsAccount?  @relation(fields: [awsAccountId], references: [id])
   tenantId      String
   tenant        Tenant       @relation(fields: [tenantId], references: [id])
   objects       FileObject[]
@@ -107,26 +111,28 @@ model User {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   hasLoggedIn Boolean          @default(false)
+  isActive    Boolean          @default(true)
   auditLogs   AuditLog[]
   policies    ResourcePolicy[]
   tenant      Tenant?          @relation(fields: [tenantId], references: [id])
   teams       TeamMembership[]
 
   // Auditing back-references (required by named relations on other models)
-  tenantsCreated   Tenant[]         @relation("TenantCreatedBy")
-  tenantsUpdated   Tenant[]         @relation("TenantUpdatedBy")
-  accountsCreated  Account[]        @relation("AccountCreatedBy")
-  accountsUpdated  Account[]        @relation("AccountUpdatedBy")
-  bucketsCreated   Bucket[]         @relation("BucketCreatedBy")
-  bucketsUpdated   Bucket[]         @relation("BucketUpdatedBy")
-  filesCreated     FileObject[]     @relation("FileObjectCreatedBy")
-  filesUpdated     FileObject[]     @relation("FileObjectUpdatedBy")
-  policiesCreated  ResourcePolicy[] @relation("PolicyCreatedBy")
-  policiesUpdated  ResourcePolicy[] @relation("PolicyUpdatedBy")
-  auditLogsCreated AuditLog[]       @relation("AuditLogCreatedBy")
-  auditLogsUpdated AuditLog[]       @relation("AuditLogUpdatedBy")
-  sharesCreated    Share[]          @relation("ShareCreatedBy")
-  sharesUpdated    Share[]          @relation("ShareUpdatedBy")
+  tenantsCreated   Tenant[]          @relation("TenantCreatedBy")
+  tenantsUpdated   Tenant[]          @relation("TenantUpdatedBy")
+  accountsCreated  Account[]         @relation("AccountCreatedBy")
+  accountsUpdated  Account[]         @relation("AccountUpdatedBy")
+  bucketsCreated   Bucket[]          @relation("BucketCreatedBy")
+  bucketsUpdated   Bucket[]          @relation("BucketUpdatedBy")
+  filesCreated     FileObject[]      @relation("FileObjectCreatedBy")
+  filesUpdated     FileObject[]      @relation("FileObjectUpdatedBy")
+  policiesCreated  ResourcePolicy[]  @relation("PolicyCreatedBy")
+  policiesUpdated  ResourcePolicy[]  @relation("PolicyUpdatedBy")
+  auditLogsCreated AuditLog[]        @relation("AuditLogCreatedBy")
+  auditLogsUpdated AuditLog[]        @relation("AuditLogUpdatedBy")
+  sharesCreated    Share[]           @relation("ShareCreatedBy")
+  sharesUpdated    Share[]           @relation("ShareUpdatedBy")
+  multipartUploads MultipartUpload[]
 }
 
 model ResourcePolicy {
@@ -254,4 +260,46 @@ model Share {
   @@index([bucketId])
   @@index([toEmail])
   @@index([status])
+}
+
+enum AccountValidationStatus {
+  CREATING
+  PENDING_VALIDATION
+  CONNECTED
+  FAILED
+  DISCONNECTED
+  DELETED
+}
+
+model AwsAccount {
+  id              String                  @id @default(cuid())
+  tenantId        String
+  awsAccountId    String
+  region          String
+  roleArn         String
+  externalId      String
+  friendlyName    String
+  description     String?
+  status          AccountValidationStatus @default(CREATING)
+  lastValidatedAt DateTime?
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  tenant  Tenant   @relation(fields: [tenantId], references: [id])
+  buckets Bucket[]
+
+  @@map("aws_accounts")
+}
+
+model MultipartUpload {
+  id        String   @id @default(cuid())
+  fileHash  String
+  uploadId  String
+  bucketId  String
+  key       String
+  createdAt DateTime @default(now())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([fileHash, userId])
 }

@@ -12,27 +12,42 @@ import {
 } from "@/components/ui/table"
 import { Badge } from "@/components/ui/badge"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card"
-import { Building, Search } from "lucide-react"
+import { Building, Search, Link as LinkIcon, AlertTriangle } from "lucide-react"
 import { CreateTenantModal } from "./create-tenant-modal"
 import { formatBytes } from "@/lib/mock-data"
 import { useState } from "react"
+import Link from "next/link"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 
 interface Tenant {
     id: string
     name: string
+    isHubTenant?: boolean
     createdAt: string
     _count: {
         users: number
     }
     storageUsed: number
+    awsAccounts?: { id: string }[]
 }
 
 interface TenantListProps {
     initialTenants: Tenant[]
+    showAwsLink?: boolean
 }
 
-export function TenantList({ initialTenants }: TenantListProps) {
+export function TenantList({ initialTenants, showAwsLink = false }: TenantListProps) {
     const [searchTerm, setSearchTerm] = useState("")
+    const [tenantToReplace, setTenantToReplace] = useState<Tenant | null>(null)
 
     const filteredTenants = initialTenants.filter(tenant =>
         tenant.name.toLowerCase().includes(searchTerm.toLowerCase())
@@ -81,6 +96,7 @@ export function TenantList({ initialTenants }: TenantListProps) {
                                 <TableHead>Users</TableHead>
                                 <TableHead>Storage Used</TableHead>
                                 <TableHead className="text-right">Created</TableHead>
+                                {showAwsLink && <TableHead className="text-right">Actions</TableHead>}
                             </TableRow>
                         </TableHeader>
                         <TableBody>
@@ -94,15 +110,17 @@ export function TenantList({ initialTenants }: TenantListProps) {
                                 filteredTenants.map((tenant) => (
                                     <TableRow key={tenant.id}>
                                         <TableCell className="font-medium">
-                                            <div className="flex items-center gap-2">
-                                                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary">
+                                            <Link href={`/superadmin/tenants/${tenant.id}`} className="flex items-center gap-2 hover:underline group">
+                                                <div className="flex h-8 w-8 items-center justify-center rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
                                                     <Building className="h-4 w-4" />
                                                 </div>
                                                 <div>
-                                                    <div className="font-semibold">{tenant.name}</div>
+                                                    <div className="font-semibold text-primary flex items-center gap-1 group-hover:text-primary/80 transition-colors">
+                                                        {tenant.name}
+                                                    </div>
                                                     <div className="text-xs text-muted-foreground">{tenant.id}</div>
                                                 </div>
-                                            </div>
+                                            </Link>
                                         </TableCell>
                                         <TableCell>
                                             <Badge variant="default">Active</Badge>
@@ -113,6 +131,32 @@ export function TenantList({ initialTenants }: TenantListProps) {
                                         <TableCell className="text-right">
                                             {new Date(tenant.createdAt).toLocaleDateString()}
                                         </TableCell>
+                                        {showAwsLink && (
+                                            <TableCell className="text-right">
+                                                {!tenant.isHubTenant && (!tenant.awsAccounts || tenant.awsAccounts.length === 0) && (
+                                                    <Button variant="outline" size="sm" asChild>
+                                                        <Link href={`/superadmin/aws-accounts/link?tenantId=${tenant.id}`}>
+                                                            <LinkIcon className="mr-2 h-4 w-4" />
+                                                            Link AWS Account
+                                                        </Link>
+                                                    </Button>
+                                                )}
+                                                {!tenant.isHubTenant && tenant.awsAccounts && tenant.awsAccounts.length > 0 && (
+                                                    <div className="flex justify-end gap-2">
+                                                        <Button variant="outline" size="sm" asChild>
+                                                            <Link href={`/superadmin/aws-accounts?tenantId=${tenant.id}`}>
+                                                                <LinkIcon className="mr-2 h-4 w-4" />
+                                                                View Connection
+                                                            </Link>
+                                                        </Button>
+                                                        <Button variant="outline" size="sm" onClick={() => setTenantToReplace(tenant)}>
+                                                            <AlertTriangle className="mr-2 h-4 w-4 text-amber-500" />
+                                                            Replace
+                                                        </Button>
+                                                    </div>
+                                                )}
+                                            </TableCell>
+                                        )}
                                     </TableRow>
                                 ))
                             )}
@@ -120,6 +164,27 @@ export function TenantList({ initialTenants }: TenantListProps) {
                     </Table>
                 </CardContent>
             </Card>
+
+            <AlertDialog open={!!tenantToReplace} onOpenChange={(open) => !open && setTenantToReplace(null)}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Replace AWS Connection for {tenantToReplace?.name}?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            This tenant already has an active AWS Account connection. To link a new one, you must first delete the existing connection from the AWS Accounts dashboard.
+                            <br /><br />
+                            Are you sure you want to proceed to the AWS Accounts dashboard to manage this connection?
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction asChild>
+                            <Link href="/superadmin/aws-accounts">
+                                Go to AWS Accounts
+                            </Link>
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

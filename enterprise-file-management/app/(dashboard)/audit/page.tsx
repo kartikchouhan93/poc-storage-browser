@@ -46,6 +46,7 @@ import { AuditLog } from "@/lib/generated/prisma/client";
 import { AuditFilters } from "@/components/audit/audit-filters";
 import { ExportCsvButton } from "@/components/audit/export-csv-button";
 import { AuditTable } from "@/components/audit/audit-table";
+import { AuditRefreshButton } from "@/components/audit/audit-refresh-button";
 
 const actionIcons: Record<string, React.ElementType> = {
   upload: Upload,
@@ -118,7 +119,10 @@ export default async function AuditPage(props: {
      
               <div className="flex items-center justify-between gap-4 flex-wrap">
                 <AuditFilters />
-                <ExportCsvButton logs={logs} />
+                <div className="flex items-center gap-2">
+                  <AuditRefreshButton />
+                  <ExportCsvButton logs={logs} />
+                </div>
               </div>
 
               <AuditTable logs={logs} pagination={pagination} />

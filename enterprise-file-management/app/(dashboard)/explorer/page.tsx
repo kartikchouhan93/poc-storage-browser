@@ -190,16 +190,28 @@ export default function ExplorerPage() {
   return (
     <>
       <SearchCommandDialog />
-      <header className="flex h-14 shrink-0 items-center gap-2 border-b px-6">
-        <SidebarTrigger className="-ml-2" />
-        <Separator orientation="vertical" className="mr-2 h-4" />
-        <Breadcrumb>
-          <BreadcrumbList>
-            <BreadcrumbItem>
-              <BreadcrumbPage>File Explorer</BreadcrumbPage>
-            </BreadcrumbItem>
-          </BreadcrumbList>
-        </Breadcrumb>
+      <header className="flex h-14 shrink-0 items-center justify-between gap-2 border-b px-6">
+        <div className="flex items-center gap-2">
+          <SidebarTrigger className="-ml-2" />
+          <Separator orientation="vertical" className="mr-2 h-4" />
+          <Breadcrumb>
+            <BreadcrumbList>
+              <BreadcrumbItem>
+                <BreadcrumbPage>File Explorer</BreadcrumbPage>
+              </BreadcrumbItem>
+            </BreadcrumbList>
+          </Breadcrumb>
+        </div>
+        <Button
+          variant="outline"
+          size="sm"
+          className="h-9"
+          disabled={loading}
+          onClick={() => fetchFiles(page, query, activeFilters, filterCreator)}
+        >
+          <RefreshCw className={`mr-2 h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+          Refresh
+        </Button>
       </header>
 
       <div className="flex-1 overflow-auto">
