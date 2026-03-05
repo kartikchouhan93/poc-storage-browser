@@ -15,7 +15,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { Button } from "@/components/ui/button";
-import { MoreHorizontal, Users, Shield, Trash2, Mail } from "lucide-react";
+import { MoreHorizontal, Users, Shield, Trash2, Mail, RefreshCw } from "lucide-react";
 import { usePermission } from "@/lib/hooks/usePermission";
 
 interface UserItem {
@@ -225,9 +225,14 @@ export function UserList({ initialUsers, tenants, availableTeams }: UserListProp
             Manage users and roles within your tenant.
           </p>
         </div>
-        {can('CREATE', { resourceType: 'user' }) && (
-          <InviteUserModal tenants={tenants} />
-        )}
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={() => router.refresh()} title="Refresh">
+            <RefreshCw className="h-4 w-4" />
+          </Button>
+          {can('CREATE', { resourceType: 'user' }) && (
+            <InviteUserModal tenants={tenants} />
+          )}
+        </div>
       </div>
 
       <div className="flex-1 bg-background rounded-lg border shadow-sm p-4">

@@ -6,7 +6,7 @@ import { DataTable, ColumnDef } from "@/components/ui/data-table";
 import { GenericModal } from "@/components/ui/generic-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Users, Plus, Trash2 } from "lucide-react";
+import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
 
 import { useAuth } from "@/components/providers/AuthProvider";
 import {
@@ -39,12 +39,20 @@ export default function TeamsPage() {
   const [error, setError] = React.useState("");
   const [searchTerm, setSearchTerm] = React.useState("");
 
-  React.useEffect(() => {
+  const [refreshing, setRefreshing] = React.useState(false);
+
+  const fetchTeams = React.useCallback(() => {
+    setRefreshing(true);
     fetch("/api/tenant/teams")
       .then((res) => res.json())
       .then((data) => (Array.isArray(data) ? setTeams(data) : setTeams([])))
-      .catch(console.error);
+      .catch(console.error)
+      .finally(() => setRefreshing(false));
   }, []);
+
+  React.useEffect(() => {
+    fetchTeams();
+  }, [fetchTeams]);
 
   const handleCreateTeam = async () => {
     if (!teamName.trim()) {
@@ -169,7 +177,11 @@ export default function TeamsPage() {
             Manage teams and map permissions for resources like buckets.
           </p>
         </div>
-        <GenericModal
+        <div className="flex items-center gap-2">
+          <Button variant="outline" size="icon" onClick={fetchTeams} title="Refresh" disabled={refreshing}>
+            <RefreshCw className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+          </Button>
+          <GenericModal
           title="Create New Team"
           description="Create a team to easily group users and assign permissions."
           open={isModalOpen}
@@ -221,6 +233,7 @@ export default function TeamsPage() {
             )}
           </div>
         </GenericModal>
+        </div>
       </div>
 
       <div className="flex-1 bg-background rounded-lg border shadow-sm p-4">

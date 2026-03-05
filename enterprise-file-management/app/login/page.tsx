@@ -20,7 +20,15 @@ export default function LoginPage() {
     const [session, setSession] = React.useState('');
     const [mode, setMode] = React.useState<'login' | 'forgot_password' | 'confirm_password'>('login');
     const [resetCode, setResetCode] = React.useState('');
+    const [resendCooldown, setResendCooldown] = React.useState(0);
     const router = useRouter();
+
+    React.useEffect(() => {
+        if (resendCooldown > 0) {
+            const timer = setTimeout(() => setResendCooldown(prev => prev - 1), 1000);
+            return () => clearTimeout(timer);
+        }
+    }, [resendCooldown]);
 
     const handleLogin = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -102,8 +110,7 @@ export default function LoginPage() {
         }
     };
 
-    const handleForgotPassword = async (e: React.FormEvent) => {
-        e.preventDefault();
+    const sendResetCode = async () => {
         setLoading(true);
         setError('');
         setSuccessMessage('');
@@ -119,6 +126,7 @@ export default function LoginPage() {
             if (res.ok) {
                 setMode('confirm_password');
                 setSuccessMessage('Password reset code sent to your email.');
+                setResendCooldown(60);
             } else {
                 setError(data.error || 'Failed to request password reset');
             }
@@ -127,6 +135,11 @@ export default function LoginPage() {
         } finally {
             setLoading(false);
         }
+    };
+
+    const handleForgotPassword = async (e: React.FormEvent) => {
+        e.preventDefault();
+        await sendResetCode();
     };
 
     const handleConfirmPassword = async (e: React.FormEvent) => {
@@ -282,6 +295,18 @@ export default function LoginPage() {
                                 'Confirm Password'
                             )}
                         </Button>
+
+                        {mode === 'confirm_password' && (
+                            <Button 
+                                type="button" 
+                                variant="outline" 
+                                className="w-full mt-2" 
+                                disabled={loading || resendCooldown > 0}
+                                onClick={sendResetCode}
+                            >
+                                {resendCooldown > 0 ? `Resend Code in ${resendCooldown}s` : 'Resend Code'}
+                            </Button>
+                        )}
 
                         {mode !== 'login' && (
                             <Button 

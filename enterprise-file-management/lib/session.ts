@@ -24,8 +24,10 @@ export async function getCurrentUser() {
     });
 
     if (!user && email) {
-      user = await prisma.user.create({
-        data: {
+      user = await prisma.user.upsert({
+        where: { email },
+        update: {},
+        create: {
           email,
           role:
             email.toLowerCase() === "admin@fms.com"

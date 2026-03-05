@@ -43,6 +43,7 @@ export async function DELETE(
       where: { id: bucketId },
       include: {
         account: true,
+        awsAccount: true,
         _count: { select: { objects: true } },
       },
     });
@@ -90,7 +91,8 @@ export async function DELETE(
 
     // Delete from AWS S3
     const account = bucket.account;
-    const s3 = getS3Client(account, bucket.region);
+    const awsAccount = bucket.awsAccount;
+    const s3 = await getS3Client(account, bucket.region, awsAccount);
 
     try {
       const { DeleteBucketCommand } = await import("@aws-sdk/client-s3");

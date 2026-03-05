@@ -39,7 +39,7 @@ export async function getAuditLogs(filters?: {
 
       if (userWithPolicies && user.tenantId) {
         const buckets = await prisma.bucket.findMany({
-          where: { account: { tenantId: user.tenantId } },
+          where: { tenantId: user.tenantId },
         });
 
         const allowedBucketIds = new Set<string>();
@@ -207,7 +207,7 @@ async function getAllowedBucketIds(user: any): Promise<string[] | null> {
 
   if (user.role === Role.TENANT_ADMIN) {
     const tenantBuckets = await prisma.bucket.findMany({
-      where: { account: { tenantId: user.tenantId } },
+      where: { tenantId: user.tenantId },
       select: { id: true },
     });
     return tenantBuckets.map((b) => b.id);
@@ -231,7 +231,7 @@ async function getAllowedBucketIds(user: any): Promise<string[] | null> {
   if (hasGlobalAccess) {
     // Wildcard access — return all tenant buckets
     const tenantBuckets = await prisma.bucket.findMany({
-      where: { account: { tenantId: user.tenantId } },
+      where: { tenantId: user.tenantId },
       select: { id: true },
     });
     return tenantBuckets.map((b) => b.id);

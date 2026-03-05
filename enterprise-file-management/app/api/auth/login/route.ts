@@ -107,6 +107,26 @@ export async function POST(request: NextRequest) {
       console.error("Local user sync err:", prismaErr);
     }
 
+    if (user && !user.isActive) {
+      logAudit({
+        userId: user.id,
+        action: "LOGIN",
+        resource: "Authentication",
+        status: "FAILED",
+        ipAddress: extractIpFromRequest(request),
+        details: {
+          reason: "User account is inactive",
+          email: cleanEmail,
+        },
+      });
+      return NextResponse.json(
+        {
+          error: "Your account is inactive. Please contact your administrator.",
+        },
+        { status: 403 },
+      );
+    }
+
     if (user) {
       const clientIp = extractIpFromRequest(request);
       if (!validateUserIpAccess(clientIp, user)) {

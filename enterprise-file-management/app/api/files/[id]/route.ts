@@ -66,7 +66,7 @@ export async function DELETE(
 
     const file = await prisma.fileObject.findUnique({
       where: { id },
-      include: { bucket: { include: { account: true } } },
+      include: { bucket: { include: { account: true, awsAccount: true } } },
     });
 
     if (!file)
@@ -74,7 +74,7 @@ export async function DELETE(
 
     // Check Permission
     const hasAccess = await checkPermission(user, "WRITE", {
-      tenantId: file.bucket.account.tenantId,
+      tenantId: file.bucket.tenantId,
       resourceType: "bucket",
       resourceId: file.bucket.id,
     });
@@ -84,8 +84,9 @@ export async function DELETE(
     }
 
     const account = file.bucket.account;
+    const awsAccount = file.bucket.awsAccount;
 
-    const s3 = getS3Client(account, file.bucket.region);
+    const s3 = await getS3Client(account, file.bucket.region, awsAccount);
 
     // Use a recursive function to delete S3 objects
     const deleteS3Objects = async (prefix: string) => {
@@ -216,7 +217,7 @@ export async function PATCH(
 
     const file = await prisma.fileObject.findUnique({
       where: { id },
-      include: { bucket: { include: { account: true } } },
+      include: { bucket: { include: { account: true, awsAccount: true } } },
     });
 
     if (!file)
@@ -224,7 +225,7 @@ export async function PATCH(
 
     // Check Permission
     const hasAccess = await checkPermission(user, "WRITE", {
-      tenantId: file.bucket.account.tenantId,
+      tenantId: file.bucket.tenantId,
       resourceType: "bucket",
       resourceId: file.bucket.id,
     });
@@ -242,7 +243,8 @@ export async function PATCH(
     }
 
     const account = file.bucket.account;
-    const s3 = getS3Client(account, file.bucket.region);
+    const awsAccount = file.bucket.awsAccount;
+    const s3 = await getS3Client(account, file.bucket.region, awsAccount);
 
     // Construct new Key
     // Get parent path from old key

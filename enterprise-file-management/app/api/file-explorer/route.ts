@@ -73,7 +73,6 @@ export async function GET(request: NextRequest) {
       // Verify Specific Bucket Access
       const bucket = await prisma.bucket.findUnique({
         where: { id: bucketId },
-        include: { account: true },
       });
 
       if (!bucket)
@@ -84,7 +83,7 @@ export async function GET(request: NextRequest) {
 
       // Check Permission
       const hasAccess = await checkPermission(user, "READ", {
-        tenantId: bucket.account.tenantId,
+        tenantId: bucket.tenantId,
         resourceType: "bucket",
         resourceId: bucket.id,
       });
@@ -96,13 +95,12 @@ export async function GET(request: NextRequest) {
     } else {
       // Fetch all buckets in tenant
       const userTenantBuckets = await prisma.bucket.findMany({
-        where: { account: { tenantId: user.tenantId! } },
-        include: { account: true },
+        where: { tenantId: user.tenantId! },
       });
       // Filter by READ permission
       for (const b of userTenantBuckets) {
         const hasAccess = await checkPermission(user, "READ", {
-          tenantId: b.account.tenantId,
+          tenantId: b.tenantId,
           resourceType: "bucket",
           resourceId: b.id,
         });

@@ -49,7 +49,7 @@ export async function GET(request: NextRequest) {
     if (user.role === Role.PLATFORM_ADMIN) {
       // See everything
     } else if (user.role === Role.TENANT_ADMIN) {
-      whereClause = { account: { tenantId: user.tenantId } };
+      whereClause = { tenantId: user.tenantId };
     } else {
       // TEAMMATE — collect ALL policies from both direct assignments and team memberships
       const allPolicies: any[] = [
@@ -67,7 +67,7 @@ export async function GET(request: NextRequest) {
       );
 
       if (hasGlobalAccess) {
-        whereClause = { account: { tenantId: user.tenantId } };
+        whereClause = { tenantId: user.tenantId };
       } else {
         const allowedBucketIds = allPolicies
           .filter(
@@ -89,7 +89,7 @@ export async function GET(request: NextRequest) {
 
         whereClause = {
           id: { in: uniqueBucketIds },
-          account: { tenantId: user.tenantId },
+          tenantId: user.tenantId,
         };
       }
     }
@@ -160,7 +160,7 @@ export async function GET(request: NextRequest) {
 // Creates a bucket on AWS S3 under the user-selected account, then saves
 // the record to the DB. If S3 creation fails the DB row is rolled back.
 //
-// Required body: { name: string, region: string, accountId: string, encryption?: boolean, isImport?: boolean }
+// Required body: { name: string, region: string, accountId?: string, awsAccountId?: string, encryption?: boolean, isExisting?: boolean }
 export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentUser();
@@ -197,6 +197,8 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { name, region, encryption, isExisting } = body;
+    let accountId = body.accountId;
+    let awsAccountId = body.awsAccountId;
 
     // Validate required fields
     if (!name || (!region && !isExisting)) {
@@ -206,59 +208,81 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Look up an existing account for the user's tenant
-    let account = await prisma.account.findFirst({
-      where: {
-        tenantId: user.tenantId as string,
-      },
-      include: { tenant: true },
-    });
+    let account: any = null;
+    let awsAccount: any = null;
 
-    if (!account) {
-      // Create a default system account if one doesn't exist for this tenant
-      const tenant = await prisma.tenant.findUnique({
-        where: { id: user.tenantId as string },
-      });
-      if (!tenant)
-        return NextResponse.json(
-          { error: "Tenant not found" },
-          { status: 404 },
-        );
-
-      account = await prisma.account.create({
-        data: {
-          name: "System Default Account",
-          tenantId: tenant.id,
-        },
+    if (!accountId && !awsAccountId) {
+      awsAccount = await prisma.awsAccount.findFirst({
+        where: { tenantId: user.tenantId as string, status: "CONNECTED" },
         include: { tenant: true },
       });
+      if (!awsAccount) {
+        account = await prisma.account.findFirst({
+          where: { tenantId: user.tenantId as string, isActive: true },
+          include: { tenant: true },
+        });
+        if (!account) {
+          const tenant = await prisma.tenant.findUnique({
+            where: { id: user.tenantId as string },
+          });
+          if (!tenant?.isHubTenant) {
+            return NextResponse.json(
+              {
+                error:
+                  "No connected AWS Account found for this tenant. Please link an AWS account first.",
+              },
+              { status: 400 },
+            );
+          }
+        }
+      }
+    } else {
+      if (accountId) {
+        account = await prisma.account.findUnique({
+          where: { id: accountId as string },
+          include: { tenant: true },
+        });
+        if (!account || account.tenantId !== user.tenantId) {
+          return NextResponse.json(
+            { error: "Invalid account ID" },
+            { status: 400 },
+          );
+        }
+      } else if (awsAccountId) {
+        awsAccount = await prisma.awsAccount.findUnique({
+          where: { id: awsAccountId as string },
+          include: { tenant: true },
+        });
+        if (!awsAccount || awsAccount.tenantId !== user.tenantId) {
+          return NextResponse.json(
+            { error: "Invalid AWS Account ID" },
+            { status: 400 },
+          );
+        }
+      }
     }
 
-    if (
-      !process.env.AWS_PROFILE &&
-      !process.env.AWS_ACCESS_KEY_ID &&
-      (!account.awsAccessKeyId || !account.awsSecretAccessKey)
-    ) {
-      return NextResponse.json(
-        {
-          error: `AWS credentials not found. Please configure AWS_PROFILE/AWS_ACCESS_KEY_ID or add credentials to the account "${account.name}".`,
-        },
-        { status: 422 },
-      );
-    }
+    const tenantName =
+      account?.tenant.name || awsAccount?.tenant.name || "tenant";
 
-    const rawTenantName = account.tenant.name
+    const rawTenantName = tenantName
       .toLowerCase()
-      .replace(/[^a-z0-9-]/g, "-");
-    const rawBucketSuffix = name.toLowerCase().replace(/[^a-z0-9-]/g, "-");
+      .replace(/[^a-z0-9-]/g, "-")
+      .substring(0, 20)
+      .replace(/-+$/, "");
+    const rawBucketSuffix = name
+      .toLowerCase()
+      .replace(/[^a-z0-9-]/g, "-")
+      .substring(0, 20)
+      .replace(/-+$/, "");
     const randomSuffix = Math.random().toString(36).substring(2, 8);
-    const finalBucketName = isExisting
-      ? name
-      : `fms-${rawTenantName}-bucket-${rawBucketSuffix}-${randomSuffix}`;
+    let constructedName = `fms-${rawTenantName}-bkt-${rawBucketSuffix}-${randomSuffix}`;
+    constructedName = constructedName.replace(/-+/g, "-");
+    const finalBucketName = isExisting ? name : constructedName;
 
     const existingBucket = await prisma.bucket.findFirst({
       where: { name: finalBucketName },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
     if (existingBucket) {
@@ -278,8 +302,9 @@ export async function POST(request: NextRequest) {
       data: {
         name: finalBucketName,
         region,
-        accountId: account.id,
-        tenantId: account.tenantId,
+        accountId: account?.id,
+        awsAccountId: awsAccount?.id,
+        tenantId: user.tenantId as string,
         encryption: !!encryption,
         versioning: false, // default
         tags: ["created-via-ui"],
@@ -296,10 +321,11 @@ export async function POST(request: NextRequest) {
         DeleteBucketCommand,
         PutBucketCorsCommand,
         HeadBucketCommand,
+        PutBucketLifecycleConfigurationCommand,
       } = await import("@aws-sdk/client-s3");
 
       const { getS3Client } = await import("@/lib/s3");
-      const s3 = getS3Client(account, region);
+      const s3 = await getS3Client(account, region, awsAccount);
 
       if (isExisting) {
         // Verify the bucket exists and we have access
@@ -310,46 +336,85 @@ export async function POST(request: NextRequest) {
         if (region !== "us-east-1") {
           input.CreateBucketConfiguration = { LocationConstraint: region };
         }
-
         await s3.send(new CreateBucketCommand(input));
 
         try {
           // Apply encryption if requested
           if (encryption) {
+            try {
+              await s3.send(
+                new PutBucketEncryptionCommand({
+                  Bucket: finalBucketName,
+                  ServerSideEncryptionConfiguration: {
+                    Rules: [
+                      {
+                        ApplyServerSideEncryptionByDefault: {
+                          SSEAlgorithm: "AES256",
+                        },
+                      },
+                    ],
+                  },
+                }),
+              );
+            } catch (err) {
+              console.warn(
+                "Could not apply encryption, insufficient IAM permissions",
+                err,
+              );
+            }
+          }
+
+          // Apply CORS configuration
+          const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || [];
+          if (allowedOrigins.length > 0) {
+            try {
+              await s3.send(
+                new PutBucketCorsCommand({
+                  Bucket: finalBucketName,
+                  CORSConfiguration: {
+                    CORSRules: [
+                      {
+                        AllowedHeaders: ["*"],
+                        AllowedMethods: ["PUT", "POST", "GET", "HEAD"],
+                        AllowedOrigins: allowedOrigins,
+                        ExposeHeaders: ["ETag"],
+                        MaxAgeSeconds: 3000,
+                      },
+                    ],
+                  },
+                }),
+              );
+            } catch (err) {
+              console.warn(
+                "Could not apply CORS, insufficient IAM permissions",
+                err,
+              );
+            }
+          }
+
+          // Apply Lifecycle Configuration for incomplete multipart uploads
+          try {
             await s3.send(
-              new PutBucketEncryptionCommand({
+              new PutBucketLifecycleConfigurationCommand({
                 Bucket: finalBucketName,
-                ServerSideEncryptionConfiguration: {
+                LifecycleConfiguration: {
                   Rules: [
                     {
-                      ApplyServerSideEncryptionByDefault: {
-                        SSEAlgorithm: "AES256",
+                      ID: "AbortIncompleteMultipartUploads",
+                      Filter: {},
+                      Status: "Enabled",
+                      AbortIncompleteMultipartUpload: {
+                        DaysAfterInitiation: 7,
                       },
                     },
                   ],
                 },
               }),
             );
-          }
-
-          // Apply CORS configuration
-          const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(",") || [];
-          if (allowedOrigins.length > 0) {
-            await s3.send(
-              new PutBucketCorsCommand({
-                Bucket: finalBucketName,
-                CORSConfiguration: {
-                  CORSRules: [
-                    {
-                      AllowedHeaders: ["*"],
-                      AllowedMethods: ["PUT", "POST", "GET", "HEAD"],
-                      AllowedOrigins: allowedOrigins,
-                      ExposeHeaders: ["ETag"],
-                      MaxAgeSeconds: 3000,
-                    },
-                  ],
-                },
-              }),
+          } catch (err) {
+            console.warn(
+              "Could not apply Lifecycle Configuration, insufficient IAM permissions",
+              err,
             );
           }
         } catch (configError) {

@@ -136,72 +136,128 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
 
     const uploadMultipart = async (fileItem: UploadFile) => {
-        const totalParts = Math.ceil(fileItem.size / PART_SIZE);
+        // Dynamic Chunk Sizing
+        let currentPartSize = PART_SIZE;
+        if (fileItem.size / currentPartSize > 9900) {
+            currentPartSize = Math.ceil(fileItem.size / 9900);
+        }
+        
+        const totalParts = Math.ceil(fileItem.size / currentPartSize);
 
-        // 1. Initiate Multipart
-        const initRes = await fetchWithAuth('/api/files/multipart/initiate', {
+        // Generate deterministic file signature
+        const fileHash = btoa(encodeURIComponent(`${fileItem.bucketId}-${fileItem.parentId || 'root'}-${fileItem.name}-${fileItem.size}-${fileItem.file.lastModified}`));
+
+        // 1. Check existing status
+        const statusRes = await fetchWithAuth('/api/files/multipart/status', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                bucketId: fileItem.bucketId,
-                name: fileItem.name,
-                type: fileItem.file.type,
-                parentId: fileItem.parentId
-            })
+            body: JSON.stringify({ fileHash })
         });
+        
+        let uploadId: string | undefined;
+        let key: string | undefined;
+        let parts: { ETag: string, PartNumber: number }[] = [];
+        
+        if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.active) {
+                uploadId = statusData.uploadId;
+                key = statusData.key;
+                parts = statusData.parts || [];
+            }
+        }
 
-        if (!initRes.ok) throw new Error('Failed to initiate multipart upload');
-        const { uploadId, key } = await initRes.json();
-
-        const parts: { ETag: string, PartNumber: number }[] = [];
-        let completedParts = 0;
-
-        const uploadPart = async (partNumber: number) => {
-            const start = (partNumber - 1) * PART_SIZE;
-            const end = Math.min(start + PART_SIZE, fileItem.size);
-            const chunk = fileItem.file.slice(start, end);
-
-            const signRes = await fetchWithAuth('/api/files/multipart/sign-part', {
+        // 2. Initiate Multipart if no active upload found
+        if (!uploadId) {
+            const initRes = await fetchWithAuth('/api/files/multipart/initiate', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ bucketId: fileItem.bucketId, key, uploadId, partNumber })
+                body: JSON.stringify({
+                    bucketId: fileItem.bucketId,
+                    name: fileItem.name,
+                    type: fileItem.file.type || "application/octet-stream",
+                    parentId: fileItem.parentId,
+                    fileHash
+                })
             });
 
-            if (!signRes.ok) throw new Error(`Failed to sign part ${partNumber}`);
-            const { url } = await signRes.json();
+            if (!initRes.ok) throw new Error('Failed to initiate multipart upload');
+            const initData = await initRes.json();
+            uploadId = initData.uploadId;
+            key = initData.key;
+        }
 
-            const uploadRes = await fetch(url, {
-                method: 'PUT',
-                body: chunk
-            });
+        let completedPartsCount = parts.length;
+        
+        if (completedPartsCount > 0) {
+            const percent = Math.round((completedPartsCount / totalParts) * 100);
+            setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, progress: percent } : f));
+        }
 
-            if (!uploadRes.ok) throw new Error(`Failed to upload part ${partNumber}`);
+        const uploadPart = async (partNumber: number) => {
+            let attempts = 0;
+            const maxAttempts = 3;
 
-            const removeQuotes = (str: string) => str.replace(/^"|"$/g, '');
-            const etag = removeQuotes(uploadRes.headers.get('ETag') || '');
-            if (!etag) throw new Error(`No ETag for part ${partNumber}`);
+            while (attempts < maxAttempts) {
+                try {
+                    const start = (partNumber - 1) * currentPartSize;
+                    const end = Math.min(start + currentPartSize, fileItem.size);
+                    const chunk = fileItem.file.slice(start, end);
 
-            parts.push({ PartNumber: partNumber, ETag: etag });
-            completedParts++;
+                    const signRes = await fetchWithAuth('/api/files/multipart/sign-part', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ bucketId: fileItem.bucketId, key, uploadId, partNumber })
+                    });
 
-            const percent = Math.round((completedParts / totalParts) * 100);
-            setFiles(prev => prev.map(f => {
-                if (f.id === fileItem.id) {
-                    return { ...f, progress: percent };
+                    if (!signRes.ok) throw new Error(`Failed to sign part ${partNumber}`);
+                    const { url } = await signRes.json();
+
+                    const uploadRes = await fetch(url, {
+                        method: 'PUT',
+                        body: chunk
+                    });
+
+                    if (!uploadRes.ok) throw new Error(`Failed to upload part ${partNumber}`);
+
+                    const removeQuotes = (str: string) => str.replace(/^"|"$/g, '');
+                    const etag = removeQuotes(uploadRes.headers.get('ETag') || '');
+                    if (!etag) throw new Error(`No ETag for part ${partNumber}`);
+
+                    parts.push({ PartNumber: partNumber, ETag: etag });
+                    completedPartsCount++;
+
+                    const percent = Math.round((completedPartsCount / totalParts) * 100);
+                    setFiles(prev => prev.map(f => {
+                        if (f.id === fileItem.id) {
+                            return { ...f, progress: percent };
+                        }
+                        return f;
+                    }));
+                    
+                    return; // Success, exit retry loop
+                    
+                } catch (error) {
+                    attempts++;
+                    console.warn(`Chunk ${partNumber} failed. Attempt ${attempts} of ${maxAttempts}. Error:`, error);
+                    if (attempts >= maxAttempts) throw error;
+                    await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempts))); // Exponential backoff
                 }
-                return f;
-            }));
+            }
         };
 
-        const partNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
+        const allPartNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
+        const remainingPartNumbers = allPartNumbers.filter(num => !parts.some(p => p.PartNumber === num));
 
-        for (let i = 0; i < partNumbers.length; i += CONCURRENCY) {
-            const batch = partNumbers.slice(i, i + CONCURRENCY);
+        // Upload remaining parts in concurrent batches
+        for (let i = 0; i < remainingPartNumbers.length; i += CONCURRENCY) {
+            const batch = remainingPartNumbers.slice(i, i + CONCURRENCY);
             await Promise.all(batch.map(partNum => uploadPart(partNum)));
         }
 
         parts.sort((a, b) => a.PartNumber - b.PartNumber);
 
+        // 3. Complete Multipart Upload
         const completeRes = await fetchWithAuth('/api/files/multipart/complete', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -212,8 +268,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 parts,
                 name: fileItem.name,
                 size: fileItem.size,
-                mimeType: fileItem.file.type,
-                parentId: fileItem.parentId
+                mimeType: fileItem.file.type || "application/octet-stream",
+                parentId: fileItem.parentId,
+                fileHash
             })
         });
 

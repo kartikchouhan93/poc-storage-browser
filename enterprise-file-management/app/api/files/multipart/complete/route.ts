@@ -32,10 +32,19 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
 
     const body = await request.json();
-    const { bucketId, key, uploadId, parts, name, size, mimeType, parentId } =
-      body;
+    const {
+      bucketId,
+      key,
+      uploadId,
+      parts,
+      name,
+      size,
+      mimeType,
+      parentId,
+      fileHash,
+    } = body;
 
-    if (!bucketId || !key || !uploadId || !parts || !name) {
+    if (!bucketId || !key || !uploadId || !parts || !name || !fileHash) {
       return NextResponse.json(
         { error: "Missing required fields" },
         { status: 400 },
@@ -44,14 +53,14 @@ export async function POST(request: NextRequest) {
 
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
     if (!bucket)
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
     const hasAccess = await checkPermission(user, "WRITE", {
-      tenantId: bucket.account.tenantId,
+      tenantId: bucket.tenantId,
       resourceType: "bucket",
       resourceId: bucket.id,
     });
@@ -61,8 +70,9 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
+    const awsAccount = bucket.awsAccount;
 
-    const s3 = getS3Client(account, bucket.region);
+    const s3 = await getS3Client(account, bucket.region, awsAccount);
 
     const command = new CompleteMultipartUploadCommand({
       Bucket: bucket.name,
@@ -74,6 +84,16 @@ export async function POST(request: NextRequest) {
     });
 
     await s3.send(command);
+
+    // Clean up our tracking table now that S3 has completed the upload
+    if (fileHash) {
+      await prisma.multipartUpload.deleteMany({
+        where: {
+          fileHash: fileHash,
+          userId: user.id,
+        },
+      });
+    }
 
     // Create or Update Database Record
     const existingFile = await prisma.fileObject.findFirst({

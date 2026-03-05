@@ -3,8 +3,12 @@ import {
   AdminCreateUserCommand,
   InitiateAuthCommand,
   AdminUpdateUserAttributesCommand,
-  ForgotPasswordCommand,
   ConfirmForgotPasswordCommand,
+  ForgotPasswordCommand,
+  AdminSetUserPasswordCommand,
+  AdminEnableUserCommand,
+  AdminDisableUserCommand,
+  AdminDeleteUserCommand,
 } from "@aws-sdk/client-cognito-identity-provider";
 import { fromIni } from "@aws-sdk/credential-providers";
 import crypto from "crypto";
@@ -19,6 +23,17 @@ const CLIENT_SECRET =
 
 export const cognitoClient = new CognitoIdentityProviderClient({
   region: REGION,
+  ...(process.env.AWS_ACCESS_KEY_ID && process.env.AWS_SECRET_ACCESS_KEY
+    ? {
+        credentials: {
+          accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+          secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+          sessionToken: process.env.AWS_SESSION_TOKEN
+            ? process.env.AWS_SESSION_TOKEN
+            : undefined,
+        },
+      }
+    : {}),
 });
 
 export function generateSecretHash(userName: string): string {
@@ -60,6 +75,53 @@ export async function inviteUserToCognito(
     return response.User;
   } catch (error) {
     console.error("Error inviting user to Cognito:", error);
+    throw error;
+  }
+}
+
+export async function createUserWithPasswordInCognito(
+  email: string,
+  password: string,
+  role: string = "TENANT_ADMIN",
+  name?: string,
+  tenantId?: string,
+) {
+  try {
+    const userAttributes = [
+      { Name: "email", Value: email },
+      { Name: "email_verified", Value: "true" },
+      { Name: "custom:role", Value: role },
+    ];
+
+    if (name) {
+      userAttributes.push({ Name: "name", Value: name });
+    }
+
+    if (tenantId) {
+      userAttributes.push({ Name: "custom:tenantId", Value: tenantId });
+    }
+
+    const createCommand = new AdminCreateUserCommand({
+      UserPoolId: USER_POOL_ID,
+      Username: email,
+      UserAttributes: userAttributes,
+      MessageAction: "SUPPRESS",
+    });
+
+    const createResponse = await cognitoClient.send(createCommand);
+
+    const setPasswordCommand = new AdminSetUserPasswordCommand({
+      UserPoolId: USER_POOL_ID,
+      Username: email,
+      Password: password,
+      Permanent: true,
+    });
+
+    await cognitoClient.send(setPasswordCommand);
+
+    return createResponse.User;
+  } catch (error) {
+    console.error("Error creating user with password in Cognito:", error);
     throw error;
   }
 }
@@ -182,6 +244,47 @@ export async function confirmForgotPassword(
     return response;
   } catch (error) {
     console.error("Confirm forgot password error:", error);
+    throw error;
+  }
+}
+
+export async function toggleUserActiveStatusInCognito(
+  email: string,
+  isActive: boolean,
+) {
+  try {
+    const CommandConstructor = isActive
+      ? AdminEnableUserCommand
+      : AdminDisableUserCommand;
+    const command = new CommandConstructor({
+      UserPoolId: USER_POOL_ID,
+      Username: email,
+    });
+    const response = await cognitoClient.send(command);
+    return response;
+  } catch (error) {
+    console.error(
+      `Error ${isActive ? "enabling" : "disabling"} user in Cognito:`,
+      error,
+    );
+    throw error;
+  }
+}
+
+export async function deleteUserInCognito(email: string) {
+  try {
+    const command = new AdminDeleteUserCommand({
+      UserPoolId: USER_POOL_ID,
+      Username: email,
+    });
+    const response = await cognitoClient.send(command);
+    return response;
+  } catch (error) {
+    console.error("Error deleting user in Cognito:", error);
+    // Suppress error if user already doesn't exist to allow DB cleanup
+    if ((error as any).name === "UserNotFoundException") {
+      return null;
+    }
     throw error;
   }
 }

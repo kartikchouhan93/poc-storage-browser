@@ -42,14 +42,14 @@ export async function POST(request: NextRequest) {
 
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
-      include: { account: true },
+      include: { account: true, awsAccount: true },
     });
 
     if (!bucket)
       return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
 
     const hasAccess = await checkPermission(user, "WRITE", {
-      tenantId: bucket.account.tenantId,
+      tenantId: bucket.tenantId,
       resourceType: "bucket",
       resourceId: bucket.id,
     });
@@ -59,8 +59,9 @@ export async function POST(request: NextRequest) {
     }
 
     const account = bucket.account;
+    const awsAccount = bucket.awsAccount;
 
-    const s3 = getS3Client(account, bucket.region);
+    const s3 = await getS3Client(account, bucket.region, awsAccount);
 
     const command = new UploadPartCommand({
       Bucket: bucket.name,
