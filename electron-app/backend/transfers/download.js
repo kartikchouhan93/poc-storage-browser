@@ -7,7 +7,7 @@ const statusManager = require('./status');
 
 class DownloadManager {
     /**
-     * Download from S3 (Sync)
+     * Download from S3 using short-lived credentials
      */
     async downloadFromS3(s3Client, bucketName, s3Key, localPath, totalSize = 0) {
         const fileName = path.basename(s3Key);
@@ -97,3 +97,32 @@ class DownloadManager {
 }
 
 module.exports = new DownloadManager();
+
+
+    /**
+     * Download from S3 by bucket ID (fetches credentials automatically)
+     */
+    async downloadWithBucketId(bucketId, s3Key, localPath, totalSize = 0) {
+        const credentialManager = require('../aws-credentials');
+        const database = require('../database');
+        
+        const dbRes = await database.query(`
+            SELECT b.region, b.name FROM "Bucket" b WHERE b.id = $1
+        `, [bucketId]);
+
+        if (dbRes.rows.length === 0) throw new Error("Bucket not found");
+        
+        const { region, name } = dbRes.rows[0];
+        const credentials = await credentialManager.getCredentialsForBucket(bucketId);
+
+        const s3 = new S3Client({
+            region: credentials.region || region,
+            credentials: {
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
+            },
+        });
+
+        return await this.downloadFromS3(s3, name, s3Key, localPath, totalSize);
+    }

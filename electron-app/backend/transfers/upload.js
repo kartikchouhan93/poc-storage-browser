@@ -86,14 +86,18 @@ class UploadManager {
 
     /**
      * Resolves credentials and bucket info then uploads.
+     * Now uses short-lived STS credentials from /api/agent/credentials
      */
     async uploadWithBucketId(bucketId, filePath, s3Key, mimeType, configId = null, syncJobId = null) {
         this.currentConfigId = configId;
         this.currentSyncJobId = syncJobId;
+        
+        const credentialManager = require('../aws-credentials');
+        
+        // Get bucket info
         const dbRes = await database.query(`
-            SELECT a."awsAccessKeyId", a."awsSecretAccessKey", b.region, b.name 
+            SELECT b.region, b.name, b."accountId"
             FROM "Bucket" b 
-            JOIN "Account" a ON b."accountId" = a.id 
             WHERE b.id = $1
         `, [bucketId]);
 
@@ -101,61 +105,21 @@ class UploadManager {
         
         const data = dbRes.rows[0];
         
-        // Resolve Best Credentials
-        let accessKeyId = decrypt(data.awsAccessKeyId);
-        let secretAccessKey = decrypt(data.awsSecretAccessKey);
-        let sessionToken = process.env.AWS_SESSION_TOKEN;
-
-        // If DB keys are missing or redacted, fallback to .env
-        if (!accessKeyId || accessKeyId.includes('*') || !secretAccessKey || secretAccessKey.includes('*')) {
-            console.log(`[UploadManager] DB credentials for ${data.name} are missing or redacted. Falling back to .env.`);
-            accessKeyId = process.env.AWS_ACCESS_KEY_ID;
-            secretAccessKey = process.env.AWS_SECRET_ACCESS_KEY;
-        }
-
-        // Sanitize: strip quotes and whitespace
-        const clean = (val) => {
-            if (!val) return null;
-            let c = val.trim();
-            if ((c.startsWith('"') && c.endsWith('"')) || (c.startsWith("'") && c.endsWith("'"))) {
-                c = c.slice(1, -1);
-            }
-            return c || null;
-        };
-        
-        const finalAccessKeyId = clean(accessKeyId);
-        const finalSecretAccessKey = clean(secretAccessKey);
-        const finalSessionToken = clean(sessionToken);
-
-        if (!finalAccessKeyId || !finalSecretAccessKey) {
-            throw new Error(`No valid AWS credentials found for bucket: ${data.name}`);
-        }
-
-        // Detect expired STS temporary credentials (ASIA... keys)
-        if (finalAccessKeyId.startsWith('ASIA')) {
-            const expiry = process.env.AWS_CREDENTIAL_EXPIRATION;
-            if (expiry) {
-                const expiryDate = new Date(expiry);
-                if (expiryDate < new Date()) {
-                    const msg = `AWS temporary credentials (STS) expired at ${expiryDate.toISOString()}. ` +
-                        `Please update AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, and AWS_SESSION_TOKEN ` +
-                        `in your .env file with fresh credentials from the AWS console.`;
-                    console.error(`[UploadManager] ${msg}`);
-                    throw new Error(msg);
-                }
-            }
-            // STS key without expiry env var — warn but attempt anyway
-            if (!finalSessionToken) {
-                console.warn('[UploadManager] STS key detected but no AWS_SESSION_TOKEN set. Upload will likely fail.');
-            }
+        // Get short-lived credentials from backend
+        let credentials;
+        try {
+            credentials = await credentialManager.getCredentialsForBucket(bucketId);
+        } catch (error) {
+            console.error(`[UploadManager] Failed to get credentials for ${data.name}:`, error.message);
+            throw new Error(`Failed to get AWS credentials: ${error.message}`);
         }
 
         const s3 = new S3Client({
-            region: data.region || process.env.AWS_REGION || 'us-east-1',
+            region: credentials.region || data.region || 'us-east-1',
             credentials: {
-                accessKeyId: finalAccessKeyId,
-                secretAccessKey: finalSecretAccessKey,
-                ...(finalSessionToken ? { sessionToken: finalSessionToken } : {})
+                accessKeyId: credentials.accessKeyId,
+                secretAccessKey: credentials.secretAccessKey,
+                sessionToken: credentials.sessionToken,
             },
         });
 

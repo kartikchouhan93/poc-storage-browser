@@ -3,6 +3,9 @@
  *
  * Validates the bearer token (Cognito JWT or bot JWT) and returns ok.
  * Used by the Electron agent's background heartbeat to detect revocation.
+ * 
+ * For bots: Updates lastHeartbeatAt timestamp to track online/offline status.
+ * Admin dashboard can show bots as offline if lastHeartbeatAt > 2 minutes ago.
  *
  * Returns 200 { ok: true, serverTime } on valid token.
  * Returns 401 on expired/invalid token.
@@ -32,10 +35,24 @@ export async function GET(request: NextRequest) {
     if (payload.type === 'bot') {
       const botId = payload.sub as string;
       const bot = await prisma.botIdentity.findUnique({ where: { id: botId } });
+      
       if (!bot || !bot.isActive) {
         return NextResponse.json({ error: 'Bot revoked' }, { status: 403 });
       }
-      return NextResponse.json({ ok: true, serverTime: new Date().toISOString(), type: 'bot' });
+
+      // Update lastHeartbeatAt timestamp for online/offline tracking
+      await prisma.botIdentity.update({
+        where: { id: botId },
+        data: { lastHeartbeatAt: new Date() },
+      });
+
+      return NextResponse.json({ 
+        ok: true, 
+        serverTime: new Date().toISOString(), 
+        type: 'bot',
+        botId: bot.id,
+        botName: bot.name,
+      });
     }
   } catch {
     // Not a bot token — fall through to Cognito verification
