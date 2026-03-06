@@ -23,6 +23,17 @@ class HeartbeatManager {
     this._timer       = null;
     this._onExpired   = null;
     this._authMode    = 'sso'; // 'sso' | 'bot'
+    this._mainWindow  = null;
+  }
+
+  initUI(mainWindow) {
+    this._mainWindow = mainWindow;
+  }
+
+  _emitStatus(status, latencyMs, serverTime) {
+    if (this._mainWindow && !this._mainWindow.isDestroyed()) {
+      this._mainWindow.webContents.send('heartbeat:status', { status, latencyMs, serverTime, timestamp: new Date().toISOString() });
+    }
   }
 
   /**
@@ -71,7 +82,9 @@ class HeartbeatManager {
       serverTime = response.headers['date'] || response.data?.serverTime || new Date().toISOString();
       
       // Log successful heartbeat
+      console.log(`[Heartbeat] ✓ OK — ${latencyMs}ms (server: ${serverTime})`);
       await this._logHeartbeat('SUCCESS', latencyMs, null, serverTime);
+      this._emitStatus('SUCCESS', latencyMs, serverTime);
       
     } catch (err) {
       const latencyMs = Date.now() - startTime;
@@ -107,6 +120,7 @@ class HeartbeatManager {
         
         // Network error or other — don't expire, just log
         console.warn('[Heartbeat] Non-fatal error:', err.message);
+        this._emitStatus('FAILED', latencyMs, null);
       }
     }
   }

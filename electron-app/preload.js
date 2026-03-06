@@ -115,5 +115,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     runDiagnostics:       ()        => ipcRenderer.invoke('doctor:run-diagnostics'),
     runSingle:            (name)    => ipcRenderer.invoke('doctor:run-single', name),
     getLastDiagnostics:   ()        => ipcRenderer.invoke('doctor:get-last-diagnostics'),
+    onDoctorProgress: (cb) => {
+      const sub = (_, val) => cb(val);
+      ipcRenderer.on('doctor:progress', sub);
+      return () => ipcRenderer.removeListener('doctor:progress', sub);
+    },
+    onHeartbeatStatus: (cb) => {
+      const sub = (_, val) => cb(val);
+      ipcRenderer.on('heartbeat:status', sub);
+      return () => ipcRenderer.removeListener('heartbeat:status', sub);
+    },
   },
 });

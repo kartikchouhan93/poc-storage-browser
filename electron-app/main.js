@@ -100,6 +100,12 @@ function createWindow() {
   const syncHistory = require('./backend/syncHistory');
   syncHistory.initUI(mainWindow);
 
+  // Initialize doctor with mainWindow for step-by-step progress events
+  backend.doctor.initUI(mainWindow);
+
+  // Initialize heartbeat with mainWindow for real-time status pushes
+  backend.heartbeat.initUI(mainWindow);
+
   startMonitoring();
   mainWindow.on('closed', () => {
     stopMonitoring();
@@ -226,6 +232,19 @@ app.whenReady().then(async () => {
 
   // 5. Register IPC (pass downloadingPaths so SyncManager can be initialized with it)
   registerIpcHandlers(mainWindow, ROOT_PATH, downloadingPaths);
+
+  // 6. Auto-start heartbeat + health reporter if session already exists from prior login
+  const existingSession = authManager.getSession();
+  if (existingSession?.idToken) {
+    const botId = require('./backend/bot-auth').getBotId();
+    const mode = botId ? 'bot' : 'sso';
+    const heartbeat = require('./backend/heartbeat');
+    heartbeat.start(mode, () => {
+      if (mainWindow) mainWindow.webContents.send('auth-expired');
+    });
+    backend.healthReporter.start(ROOT_PATH);
+    console.log(`[Main] Resumed heartbeat + health reporter (mode=${mode}) from existing session`);
+  }
 });
 
 app.on('window-all-closed', async () => {

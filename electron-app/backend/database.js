@@ -298,6 +298,23 @@ const initDB = () => {
       );
     `);
 
+    // ── AgentHeartbeatLog table for local agent health checks ────────────
+    conn.exec(`
+      CREATE TABLE IF NOT EXISTS "AgentHeartbeatLog" (
+        "id" TEXT PRIMARY KEY,
+        "timestamp" TEXT DEFAULT (datetime('now')),
+        "status" TEXT NOT NULL,
+        "latencyMs" INTEGER,
+        "error" TEXT
+      );
+    `);
+
+    // Prune agent heartbeat logs older than 24 hours
+    conn.exec(`
+      DELETE FROM "AgentHeartbeatLog"
+      WHERE "timestamp" < datetime('now', '-24 hours');
+    `);
+
     // Prune heartbeat logs older than 24 hours
     conn.exec(`
       DELETE FROM "HeartbeatLog"

@@ -22,6 +22,9 @@ class BackendCentral {
         this.auth = require('./auth');
         this.delete = deleteManager;
         this.queue = require('./transfers/queue');
+        this.heartbeat = require('./heartbeat');
+        this.doctor = require('./doctor');
+        this.healthReporter = require('./health-reporter');
     }
 
     /**
