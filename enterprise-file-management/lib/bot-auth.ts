@@ -15,8 +15,8 @@ export interface BotAuthResult {
 }
 
 /**
- * Try to verify a token as a bot HS256 JWT.
- * Returns BotAuthResult if valid bot token, null otherwise.
+ * Try to verify a token as a service account HS256 JWT.
+ * Returns BotAuthResult if valid service account token, null otherwise.
  */
 export async function verifyBotToken(token: string): Promise<BotAuthResult | null> {
   try {
@@ -55,8 +55,8 @@ export async function verifyBotToken(token: string): Promise<BotAuthResult | nul
 }
 
 /**
- * Assert that a bot (if present) has access to a specific bucket.
- * If botAuth is null (regular user), always returns true — no bot restriction.
+ * Assert that a service account (if present) has access to a specific bucket.
+ * If botAuth is null (regular user), always returns true — no service account restriction.
  */
 export function assertBotBucketAccess(
   botAuth: BotAuthResult | null,
