@@ -17,6 +17,7 @@ import ExplorerPage from "./pages/ExplorerPage";
 import SyncPage from "./pages/SyncPage";
 import SyncHistoryPage from "./pages/SyncHistoryPage";
 import RecentActivitiesPage from "./pages/RecentActivitiesPage";
+import DoctorPage from "./pages/DoctorPage";
 import LoginPage from "./pages/LoginPage";
 import { SystemProvider } from "./contexts/SystemContext";
 
@@ -46,6 +47,7 @@ const Layout = () => {
             <Route path="/sync" element={<SyncPage />} />
             <Route path="/sync/:configId" element={<SyncHistoryPage />} />
             <Route path="/recent" element={<RecentActivitiesPage />} />
+            <Route path="/doctor" element={<DoctorPage />} />
           </Routes>
         </div>
       </div>

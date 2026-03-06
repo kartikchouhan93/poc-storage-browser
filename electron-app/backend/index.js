@@ -268,3 +268,13 @@ class BackendCentral {
 }
 
 module.exports = new BackendCentral();
+
+// Export doctor and heartbeat modules
+const heartbeat = require('./heartbeat');
+const doctor = require('./doctor');
+
+module.exports.heartbeat = heartbeat;
+module.exports.doctor = doctor;
+
+const healthReporter = require('./health-reporter');
+module.exports.healthReporter = healthReporter;

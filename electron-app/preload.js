@@ -108,4 +108,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
     handshake:       (botId)    => ipcRenderer.invoke('bot:handshake', { botId }),
     deregister:      ()         => ipcRenderer.invoke('bot:deregister'),
   },
+
+  // 10. Doctor Diagnostics
+  doctor: {
+    getHeartbeatHistory:  (minutes) => ipcRenderer.invoke('doctor:get-heartbeat-history', minutes),
+    runDiagnostics:       ()        => ipcRenderer.invoke('doctor:run-diagnostics'),
+    runSingle:            (name)    => ipcRenderer.invoke('doctor:run-single', name),
+    getLastDiagnostics:   ()        => ipcRenderer.invoke('doctor:get-last-diagnostics'),
+  },
 });
