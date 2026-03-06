@@ -2,7 +2,30 @@
 
 import prisma from "@/lib/prisma"
 
-export async function getPlatformStats() {
+interface PlatformStatsFilters {
+  timeRange?: string
+  dateFrom?: string
+  dateTo?: string
+}
+
+function getDateFilter(filters?: PlatformStatsFilters): { gte?: Date; lte?: Date } | undefined {
+  if (!filters?.timeRange || filters.timeRange === "all") return undefined
+  const now = new Date()
+  if (filters.timeRange === "custom" && filters.dateFrom && filters.dateTo) {
+    return { gte: new Date(filters.dateFrom), lte: new Date(filters.dateTo) }
+  }
+  const days: Record<string, number> = { today: 0, "7d": 7, "14d": 14, "30d": 30 }
+  const d = days[filters.timeRange]
+  if (d === undefined) return undefined
+  const from = new Date(now)
+  if (d === 0) { from.setHours(0, 0, 0, 0) } else { from.setDate(from.getDate() - d) }
+  return { gte: from, lte: now }
+}
+
+export async function getPlatformStats(filters?: PlatformStatsFilters) {
+  const dateFilter = getDateFilter(filters)
+  const createdAtFilter = dateFilter ? { createdAt: dateFilter } : {}
+
   const [
     tenantCount,
     userCount,
@@ -13,18 +36,24 @@ export async function getPlatformStats() {
     recentAuditLogs,
     topTenants,
   ] = await Promise.all([
-    prisma.tenant.count(),
-    prisma.user.count({ where: { isActive: true } }),
-    prisma.bucket.count(),
-    prisma.botIdentity.count({ where: { isActive: true } }),
-    prisma.fileObject.aggregate({ _sum: { size: true }, _count: { id: true } }),
+    prisma.tenant.count({ where: createdAtFilter }),
+    prisma.user.count({ where: { isActive: true, ...createdAtFilter } }),
+    prisma.bucket.count({ where: createdAtFilter }),
+    prisma.botIdentity.count({ where: { isActive: true, ...createdAtFilter } }),
+    prisma.fileObject.aggregate({
+      where: createdAtFilter,
+      _sum: { size: true },
+      _count: { id: true },
+    }),
     prisma.awsAccount.groupBy({ by: ["status"], _count: { id: true } }),
     prisma.auditLog.findMany({
+      where: createdAtFilter,
       take: 8,
       orderBy: { createdAt: "desc" },
       include: { user: { select: { name: true, email: true } } },
     }),
     prisma.tenant.findMany({
+      where: createdAtFilter,
       take: 5,
       include: {
         _count: { select: { users: true, buckets: true } },
@@ -34,9 +63,9 @@ export async function getPlatformStats() {
     }),
   ])
 
-  // Storage aggregation per tenant for top tenants
   const tenantStorageMap = await prisma.fileObject.groupBy({
     by: ["tenantId"],
+    ...(dateFilter ? { where: { createdAt: dateFilter } } : {}),
     _sum: { size: true },
   })
   const storageByTenant = Object.fromEntries(
@@ -70,7 +99,6 @@ export async function getPlatformStats() {
     topTenants: topTenants.map((t) => ({
       id: t.id,
       name: t.name,
-      isHubTenant: t.isHubTenant,
       userCount: t._count.users,
       bucketCount: t._count.buckets,
       storageBytes: storageByTenant[t.id] ?? 0,

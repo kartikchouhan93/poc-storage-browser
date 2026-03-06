@@ -42,19 +42,26 @@ export async function POST(request: Request) {
     const existingAccount = await prisma.awsAccount.findFirst({
       where: {
         tenantId,
-        status: {
-          in: ["CONNECTED", "CREATING", "PENDING_VALIDATION"],
-        },
+        status: { in: ["CONNECTED", "CREATING", "PENDING_VALIDATION"] },
       },
     });
 
     if (existingAccount) {
       return NextResponse.json(
-        {
-          error:
-            "Tenant already has an active AWS Account. Please delete it first.",
-        },
+        { error: "Tenant already has an active AWS Account. Please delete it first." },
         { status: 400 },
+      );
+    }
+
+    // Enforce global uniqueness — one AWS account ID across all tenants
+    const duplicateAwsAccount = await prisma.awsAccount.findFirst({
+      where: { awsAccountId },
+    });
+
+    if (duplicateAwsAccount) {
+      return NextResponse.json(
+        { error: `AWS Account ID ${awsAccountId} is already linked to another tenant.` },
+        { status: 409 },
       );
     }
 

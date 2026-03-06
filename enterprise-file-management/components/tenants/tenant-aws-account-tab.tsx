@@ -34,7 +34,6 @@ interface AwsAccount {
 interface Props {
   tenantId: string
   tenantName: string
-  isHubTenant: boolean
   awsAccounts: AwsAccount[]
 }
 
@@ -59,7 +58,7 @@ const statusVariant = (status: string): "default" | "secondary" | "destructive" 
 const POLLING_STATUSES = ["PENDING_VALIDATION", "CREATING"]
 const POLL_INTERVAL_MS = 3000
 
-export function TenantAwsAccountTab({ tenantId, tenantName, isHubTenant, awsAccounts }: Props) {
+export function TenantAwsAccountTab({ tenantId, tenantName, awsAccounts }: Props) {
   const router = useRouter()
   const { toast } = useToast()
 
@@ -147,21 +146,6 @@ export function TenantAwsAccountTab({ tenantId, tenantName, isHubTenant, awsAcco
     } finally {
       setIsDeleting(false)
     }
-  }
-
-  // Hub tenant — no BYOC
-  if (isHubTenant) {
-    return (
-      <Card>
-        <CardContent className="flex flex-col items-center justify-center py-16 text-center">
-          <Cloud className="h-10 w-10 mb-3 text-muted-foreground/40" />
-          <p className="font-medium">Hub Tenant</p>
-          <p className="text-sm text-muted-foreground mt-1">
-            This tenant uses the central AWS environment directly.
-          </p>
-        </CardContent>
-      </Card>
-    )
   }
 
   // Show inline integration form

@@ -31,7 +31,6 @@ import {
 interface Tenant {
     id: string
     name: string
-    isHubTenant?: boolean
     createdAt: string
     _count: {
         users: number

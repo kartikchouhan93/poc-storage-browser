@@ -107,9 +107,7 @@ export default async function TenantDetailsPage({ params }: { params: Promise<{ 
               <h1 className="text-2xl font-bold tracking-tight">{tenant.name}</h1>
               <p className="text-xs text-muted-foreground font-mono">{tenant.id}</p>
             </div>
-            {tenant.isHubTenant && (
-              <Badge variant="secondary" className="ml-2">Hub Tenant</Badge>
-            )}
+
           </div>
         </div>
       </div>
@@ -189,7 +187,7 @@ export default async function TenantDetailsPage({ params }: { params: Promise<{ 
                   </div>
                   <div>
                     <div className="text-sm font-medium text-muted-foreground">Type</div>
-                    <div>{tenant.isHubTenant ? "Central Hub" : "Standard Customer"}</div>
+                    <div>Standard Customer</div>
                   </div>
                 </div>
               </CardContent>
@@ -201,12 +199,7 @@ export default async function TenantDetailsPage({ params }: { params: Promise<{ 
                 <CardDescription>Cross-account architecture linkage</CardDescription>
               </CardHeader>
               <CardContent>
-                {tenant.isHubTenant ? (
-                  <div className="text-muted-foreground flex flex-col items-center justify-center h-24 text-center">
-                    <Cloud className="h-8 w-8 mb-2 opacity-50" />
-                    <p>This is the Hub Tenant.<br/>It directly uses the central AWS environment.</p>
-                  </div>
-                ) : activeAwsAccount ? (
+                {activeAwsAccount ? (
                   <div className="space-y-4">
                     <div className="flex items-center justify-between">
                       <div className="flex items-center gap-2">
@@ -241,7 +234,7 @@ export default async function TenantDetailsPage({ params }: { params: Promise<{ 
                   <div className="flex flex-col items-center justify-center p-6 text-center border-2 border-dashed rounded-lg bg-muted/20">
                     <Cloud className="h-8 w-8 mb-2 text-muted-foreground/50" />
                     <h3 className="text-sm font-medium mb-1">No AWS Account Integrated</h3>
-                    <p className="text-xs text-muted-foreground mb-4">This tenant relies on the central hub architecture.</p>
+                    <p className="text-xs text-muted-foreground mb-4">Link an AWS account to enable Bring-Your-Own-Cloud storage.</p>
                     <Button variant="outline" size="sm" asChild>
                       <Link href={`/superadmin/aws-accounts/link?tenantId=${tenant.id}`}>
                         Setup Bring-Your-Own-Cloud
@@ -359,7 +352,6 @@ export default async function TenantDetailsPage({ params }: { params: Promise<{ 
           <TenantAwsAccountTab
             tenantId={tenant.id}
             tenantName={tenant.name}
-            isHubTenant={tenant.isHubTenant}
             awsAccounts={tenant.awsAccounts.map(a => ({
               ...a,
               createdAt: a.createdAt.toISOString(),

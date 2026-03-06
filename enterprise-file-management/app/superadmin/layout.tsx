@@ -17,7 +17,6 @@ export default async function SuperAdminLayout({
         <h2 className="text-xl font-bold tracking-tight mb-6 text-slate-800 dark:text-slate-100">PLATFORM ADMIN</h2>
         <nav className="flex flex-col gap-2">
           <Link href="/superadmin" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Dashboard</Link>
-          <Link href="/superadmin/buckets" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Buckets</Link>
           <Link href="/superadmin/tenants" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Tenants</Link>
         </nav>
       </aside>

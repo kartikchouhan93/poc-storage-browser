@@ -309,6 +309,7 @@ model AwsAccount {
   tenant  Tenant   @relation(fields: [tenantId], references: [id])
   buckets Bucket[]
 
+  @@unique([awsAccountId])
   @@map("aws_accounts")
 }
 

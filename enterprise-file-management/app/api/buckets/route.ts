@@ -222,18 +222,7 @@ export async function POST(request: NextRequest) {
           include: { tenant: true },
         });
         if (!account) {
-          const tenant = await prisma.tenant.findUnique({
-            where: { id: user.tenantId as string },
-          });
-          if (!tenant?.isHubTenant) {
-            return NextResponse.json(
-              {
-                error:
-                  "No connected AWS Account found for this tenant. Please link an AWS account first.",
-              },
-              { status: 400 },
-            );
-          }
+          // No tenant-specific account found — fall through to default credential chain (env vars / IAM role)
         }
       }
     } else {
