@@ -162,6 +162,8 @@ class HeartbeatManager {
       this._expire('No bot ID stored');
       return;
     }
+    
+    console.log('[Heartbeat] Attempting bot re-handshake for:', botId);
     try {
       const result = await botAuth.performHandshake(botId);
       authManager.login({
@@ -172,6 +174,9 @@ class HeartbeatManager {
         email:        result.email,
       });
       console.log('[Heartbeat] Bot re-handshake successful');
+      
+      // Log successful recovery
+      await this._logHeartbeat('SUCCESS', 0, 'Recovered via re-handshake', null);
     } catch (err) {
       console.error('[Heartbeat] Bot re-handshake failed:', err.message);
       this._expire('Bot handshake failed — key may have been revoked');

@@ -428,6 +428,47 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
         }
     });
 
+    // Auto-login attempt on startup
+    ipcMain.handle('bot:attempt-auto-login', async () => {
+        try {
+            if (!botAuth.hasKeyPair() || !botAuth.getBotId()) {
+                return { success: false, reason: 'no_credentials' };
+            }
+
+            const botId = botAuth.getBotId();
+            const result = await botAuth.performHandshake(botId);
+            
+            authManager.login({
+                accessToken:  result.accessToken,
+                idToken:      result.accessToken,
+                refreshToken: result.refreshToken,
+                username:     result.email,
+                email:        result.email,
+            });
+
+            // Start heartbeat in bot mode
+            const heartbeat = require('../backend/heartbeat');
+            heartbeat.start('bot', () => {
+                if (mainWindow) mainWindow.webContents.send('auth-expired');
+            });
+
+            // Start health reporter
+            backend.healthReporter.start(rootPath);
+
+            console.log('[IPC] Auto-login successful for bot:', botId);
+            return { 
+                success: true, 
+                accessToken: result.accessToken, 
+                email: result.email,
+                botId,
+                isAutoLogin: true
+            };
+        } catch (err) {
+            console.error('[IPC] Auto-login failed:', err.message);
+            return { success: false, error: err.message, reason: 'handshake_failed' };
+        }
+    });
+
     ipcMain.handle('bot:deregister', () => {
         botAuth.clearBotIdentity();
         authManager.logout();

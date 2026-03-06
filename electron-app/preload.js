@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     saveBotId:       (botId)    => ipcRenderer.invoke('bot:save-bot-id', { botId }),
     getBotId:        ()         => ipcRenderer.invoke('bot:get-bot-id'),
     handshake:       (botId)    => ipcRenderer.invoke('bot:handshake', { botId }),
+    attemptAutoLogin: ()        => ipcRenderer.invoke('bot:attempt-auto-login'),
     deregister:      ()         => ipcRenderer.invoke('bot:deregister'),
   },
 

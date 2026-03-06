@@ -64,7 +64,7 @@ export async function GET(request: NextRequest) {
 
     const now = Date.now();
     const lastBeat = bot.lastHeartbeatAt ? new Date(bot.lastHeartbeatAt).getTime() : 0;
-    const isOnline = now - lastBeat < 2 * 60 * 1000;
+    const isOnline = now - lastBeat < 10 * 1000; // 10 seconds
 
     return NextResponse.json({
       bot: {

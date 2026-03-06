@@ -231,7 +231,7 @@ export default function BotDetailPage() {
     router.replace('/bots');
   }
 
-  if (!bot) return <div className="p-8 text-center text-muted-foreground">Loading bot...</div>;
+  if (!bot) return <div className="p-8 text-center text-muted-foreground">Loading service account...</div>;
 
   const hLogs = (healthData?.heartbeatLogs as any[]) ?? [];
   const diags = (healthData?.diagnostics as any[]) ?? [];
@@ -243,7 +243,7 @@ export default function BotDetailPage() {
       {/* Header */}
       <div>
         <Button variant="link" className="px-0 text-muted-foreground mb-2" onClick={() => router.push('/bots')}>
-          ← Back to Bots
+          ← Back to Service Accounts
         </Button>
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
@@ -262,15 +262,15 @@ export default function BotDetailPage() {
             <AlertDialog>
               <AlertDialogTrigger asChild>
                 <Button variant="destructive" size="sm" className="gap-1.5">
-                  <ShieldOff className="h-3.5 w-3.5" /> Revoke Bot
+                  <ShieldOff className="h-3.5 w-3.5" /> Revoke Account
                 </Button>
               </AlertDialogTrigger>
               <AlertDialogContent>
                 <AlertDialogHeader>
-                  <AlertDialogTitle>Revoke bot access?</AlertDialogTitle>
+                  <AlertDialogTitle>Revoke service account?</AlertDialogTitle>
                   <AlertDialogDescription>
                     Permanently deletes <strong>{bot.name}</strong> and invalidates all its tokens immediately.
-                    The bot's next heartbeat will fail — this is the Kill Switch.
+                    The service account's next heartbeat will fail — this is the Kill Switch.
                   </AlertDialogDescription>
                 </AlertDialogHeader>
                 <AlertDialogFooter>
@@ -289,7 +289,7 @@ export default function BotDetailPage() {
       <Tabs defaultValue="permissions" className="w-full mt-6">
         <TabsList className="mb-4">
           <TabsTrigger value="permissions" className="gap-2"><Shield className="h-4 w-4" /> Permissions</TabsTrigger>
-          <TabsTrigger value="activity" className="gap-2" onClick={loadActivity}><Activity className="h-4 w-4" /> Bot Activity</TabsTrigger>
+          <TabsTrigger value="activity" className="gap-2" onClick={loadActivity}><Activity className="h-4 w-4" /> Activity</TabsTrigger>
           <TabsTrigger value="health" className="gap-2" onClick={loadHealth}><Stethoscope className="h-4 w-4" /> Health & Metrics</TabsTrigger>
         </TabsList>
 
@@ -298,7 +298,7 @@ export default function BotDetailPage() {
           <div className="flex justify-between items-center bg-white dark:bg-slate-950 px-6 py-4 border-b">
             <div>
               <h2 className="text-xl font-semibold">Bucket Access Matrix</h2>
-              <p className="text-sm text-muted-foreground mt-1">Select the actions this bot is allowed to perform on each bucket.</p>
+              <p className="text-sm text-muted-foreground mt-1">Select the actions this service account is allowed to perform on each bucket.</p>
             </div>
             <div className="flex items-center gap-3">
               {saveMsg && <span className={`text-sm font-medium ${saveMsg.startsWith('Saved') ? 'text-emerald-600' : 'text-red-500'}`}>{saveMsg}</span>}
@@ -345,7 +345,7 @@ export default function BotDetailPage() {
         <TabsContent value="activity" className="bg-white dark:bg-slate-950 border rounded-lg overflow-hidden">
           <div className="px-6 py-4 border-b flex items-center justify-between">
             <div>
-              <h2 className="text-xl font-semibold">Bot Activity</h2>
+              <h2 className="text-xl font-semibold">Account Activity</h2>
               <p className="text-sm text-muted-foreground mt-1">Recent sync and authentication events.</p>
             </div>
             <Button variant="outline" size="sm" className="gap-1.5" onClick={loadActivity} disabled={activityLoading}>

@@ -5,6 +5,7 @@ const chokidar = require('chokidar');
 const si = require('systeminformation');
 const backend = require('./backend');
 const authManager = require('./backend/auth');
+const botAuth = require('./backend/bot-auth');
 const { registerIpcHandlers } = require('./main/ipcHandlers');
 
 // ── Deep-link / Protocol handler ──────────────────────────────────────────
@@ -235,15 +236,39 @@ app.whenReady().then(async () => {
 
   // 6. Auto-start heartbeat + health reporter if session already exists from prior login
   const existingSession = authManager.getSession();
-  if (existingSession?.idToken) {
-    const botId = require('./backend/bot-auth').getBotId();
-    const mode = botId ? 'bot' : 'sso';
+  const botId = botAuth.getBotId();
+  const hasBotIdentity = botAuth.hasKeyPair() && !!botId;
+
+  if (hasBotIdentity) {
+    // Bot identity exists — re-handshake to get fresh tokens before starting heartbeat
+    console.log(`[Main] Bot identity found (${botId}), performing fresh handshake...`);
+    try {
+      const result = await botAuth.performHandshake(botId);
+      authManager.login({
+        accessToken:  result.accessToken,
+        idToken:      result.accessToken,
+        refreshToken: result.refreshToken,
+        username:     result.email,
+        email:        result.email,
+      });
+      const heartbeat = require('./backend/heartbeat');
+      heartbeat.start('bot', () => {
+        if (mainWindow) mainWindow.webContents.send('auth-expired');
+      });
+      backend.healthReporter.start(ROOT_PATH);
+      console.log(`[Main] Bot re-handshake successful — heartbeat + health reporter started (mode=bot)`);
+    } catch (err) {
+      console.error(`[Main] Bot re-handshake failed on startup:`, err.message);
+      // Fall through — renderer will handle login
+    }
+  } else if (existingSession?.idToken) {
+    // SSO session — start heartbeat with existing tokens (will refresh if needed)
     const heartbeat = require('./backend/heartbeat');
-    heartbeat.start(mode, () => {
+    heartbeat.start('sso', () => {
       if (mainWindow) mainWindow.webContents.send('auth-expired');
     });
     backend.healthReporter.start(ROOT_PATH);
-    console.log(`[Main] Resumed heartbeat + health reporter (mode=${mode}) from existing session`);
+    console.log(`[Main] Resumed heartbeat + health reporter (mode=sso) from existing session`);
   }
 });
 
