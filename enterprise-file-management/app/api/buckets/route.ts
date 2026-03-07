@@ -23,7 +23,10 @@ export async function GET(request: NextRequest) {
     if (botAuth) {
       user = await prisma.user.findUnique({
         where: { email: botAuth.email },
-        include: { policies: true, teams: { include: { team: { include: { policies: true } } } } },
+        include: {
+          policies: true,
+          teams: { include: { team: { include: { policies: true } } } },
+        },
       });
     } else {
       user = await getCurrentUser();
@@ -32,7 +35,10 @@ export async function GET(request: NextRequest) {
         if (payload?.email) {
           user = await prisma.user.findUnique({
             where: { email: payload.email as string },
-            include: { policies: true, teams: { include: { team: { include: { policies: true } } } } },
+            include: {
+              policies: true,
+              teams: { include: { team: { include: { policies: true } } } },
+            },
           });
         }
       }
@@ -66,7 +72,6 @@ export async function GET(request: NextRequest) {
     const page = parseInt(searchParams.get("page") || "1");
     const limit = parseInt(searchParams.get("limit") || "10");
     const search = searchParams.get("search") || "";
-    const filterAccountId = searchParams.get("accountId") || "";
     const skip = (page - 1) * limit;
 
     let whereClause: any = {};
@@ -136,10 +141,6 @@ export async function GET(request: NextRequest) {
       whereClause.name = { contains: search, mode: "insensitive" };
     }
 
-    if (filterAccountId) {
-      whereClause.accountId = filterAccountId;
-    }
-
     // Get total count for pagination
     const total = await prisma.bucket.count({ where: whereClause });
 
@@ -162,8 +163,8 @@ export async function GET(request: NextRequest) {
           id: bucket.id,
           name: bucket.name,
           region: bucket.region,
-          accountId: bucket.accountId,
-          storageClass: "STANDARD", // Still hardcoded as per plan
+          awsAccountId: bucket.awsAccountId,
+          storageClass: "STANDARD",
           versioning: bucket.versioning,
           encryption: bucket.encryption,
           totalSize: Number(stats._sum.size ?? 0),
@@ -197,7 +198,7 @@ export async function GET(request: NextRequest) {
 // Creates a bucket on AWS S3 under the user-selected account, then saves
 // the record to the DB. If S3 creation fails the DB row is rolled back.
 //
-// Required body: { name: string, region: string, accountId?: string, awsAccountId?: string, encryption?: boolean, isExisting?: boolean }
+// Required body: { name: string, region: string, awsAccountId?: string, encryption?: boolean, isExisting?: boolean }
 export async function POST(request: NextRequest) {
   try {
     const user = await getCurrentUser();
@@ -234,8 +235,7 @@ export async function POST(request: NextRequest) {
 
     const body = await request.json();
     const { name, region, encryption, isExisting } = body;
-    let accountId = body.accountId;
-    let awsAccountId = body.awsAccountId;
+    const awsAccountId: string | undefined = body.awsAccountId;
 
     // Validate required fields
     if (!name || (!region && !isExisting)) {
@@ -245,51 +245,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    let account: any = null;
     let awsAccount: any = null;
 
-    if (!accountId && !awsAccountId) {
+    if (!awsAccountId) {
+      // Auto-detect the first connected AWS account for this tenant
       awsAccount = await prisma.awsAccount.findFirst({
         where: { tenantId: user.tenantId as string, status: "CONNECTED" },
         include: { tenant: true },
       });
-      if (!awsAccount) {
-        account = await prisma.account.findFirst({
-          where: { tenantId: user.tenantId as string, isActive: true },
-          include: { tenant: true },
-        });
-        if (!account) {
-          // No tenant-specific account found — fall through to default credential chain (env vars / IAM role)
-        }
-      }
     } else {
-      if (accountId) {
-        account = await prisma.account.findUnique({
-          where: { id: accountId as string },
-          include: { tenant: true },
-        });
-        if (!account || account.tenantId !== user.tenantId) {
-          return NextResponse.json(
-            { error: "Invalid account ID" },
-            { status: 400 },
-          );
-        }
-      } else if (awsAccountId) {
-        awsAccount = await prisma.awsAccount.findUnique({
-          where: { id: awsAccountId as string },
-          include: { tenant: true },
-        });
-        if (!awsAccount || awsAccount.tenantId !== user.tenantId) {
-          return NextResponse.json(
-            { error: "Invalid AWS Account ID" },
-            { status: 400 },
-          );
-        }
+      awsAccount = await prisma.awsAccount.findUnique({
+        where: { id: awsAccountId },
+        include: { tenant: true },
+      });
+      if (!awsAccount || awsAccount.tenantId !== user.tenantId) {
+        return NextResponse.json(
+          { error: "Invalid AWS Account ID" },
+          { status: 400 },
+        );
       }
     }
 
-    const tenantName =
-      account?.tenant.name || awsAccount?.tenant.name || "tenant";
+    const tenantName = awsAccount?.tenant.name ?? "tenant";
 
     const rawTenantName = tenantName
       .toLowerCase()
@@ -308,16 +285,13 @@ export async function POST(request: NextRequest) {
 
     const existingBucket = await prisma.bucket.findFirst({
       where: { name: finalBucketName },
-      include: { account: true, awsAccount: true },
+      include: { awsAccount: true },
     });
 
     if (existingBucket) {
-      const isSameTenant = existingBucket.account?.tenantId === user.tenantId;
       return NextResponse.json(
         {
-          error: isSameTenant
-            ? `Bucket "${finalBucketName}" is already mapped in your tenant. You should see it in your Buckets list.`
-            : `Bucket "${finalBucketName}" is already tracked by another tenant in the system. Please use a different name.`,
+          error: `Bucket "${finalBucketName}" is already tracked in the system. Please use a different name.`,
         },
         { status: 409 },
       );
@@ -328,11 +302,10 @@ export async function POST(request: NextRequest) {
       data: {
         name: finalBucketName,
         region,
-        accountId: account?.id,
         awsAccountId: awsAccount?.id,
         tenantId: user.tenantId as string,
         encryption: !!encryption,
-        versioning: false, // default
+        versioning: false,
         tags: ["created-via-ui"],
       },
     });
@@ -351,7 +324,7 @@ export async function POST(request: NextRequest) {
       } = await import("@aws-sdk/client-s3");
 
       const { getS3Client } = await import("@/lib/s3");
-      const s3 = await getS3Client(account, region, awsAccount);
+      const s3 = await getS3Client(null, region, awsAccount);
 
       if (isExisting) {
         // Verify the bucket exists and we have access
@@ -504,13 +477,12 @@ export async function POST(request: NextRequest) {
     // BYOA buckets need EventBridge set up in the tenant's account.
     if (awsAccount) {
       try {
-        const { setupBucketEventBridge } = await import(
-          "@/lib/aws/setup-bucket-events"
-        );
+        const { setupBucketEventBridge } =
+          await import("@/lib/aws/setup-bucket-events");
         const ourEventBusArn = process.env.FILE_SYNC_EVENT_BUS_ARN;
         if (!ourEventBusArn) {
           console.warn(
-            "FILE_SYNC_EVENT_BUS_ARN not set — skipping EventBridge setup for BYOA bucket"
+            "FILE_SYNC_EVENT_BUS_ARN not set — skipping EventBridge setup for BYOA bucket",
           );
         } else {
           const { decrypt } = await import("@/lib/encryption");
@@ -522,7 +494,7 @@ export async function POST(request: NextRequest) {
               region: region,
             },
             finalBucketName,
-            ourEventBusArn
+            ourEventBusArn,
           );
 
           // Persist the rule ARN for cleanup on deregistration
@@ -536,7 +508,7 @@ export async function POST(request: NextRequest) {
         // Log and surface as a warning — operator can re-trigger setup manually.
         console.error(
           "EventBridge setup failed for BYOA bucket — file DB sync will not be automatic:",
-          ebError
+          ebError,
         );
       }
     }

@@ -1,0 +1,107 @@
+# Deployment Guide for New AWS Account
+
+This guide outlines the steps to deploy the CloudVault Enterprise portal and its associated infrastructure to a fresh AWS account.
+
+## Prerequisites
+
+- **AWS CLI**: Configured with an IAM user/role having `AdministratorAccess`.
+- **Pulumi CLI**: Installed and authenticated.
+- **Node.js**: Version 18 or higher.
+- **Docker**: Running (required for building the Lambda/ECS images).
+- **PostgreSQL Client (psql)**: For database verification.
+
+---
+
+## 1. Configure Environment Variables
+
+Create or update the [.env](file:///home/sami/Documents/projects/poc/storage-browser-poc/enterprise-file-management/.env) file in the root directory with the new account's details.
+
+```bash
+# AWS Credentials
+AWS_ACCESS_KEY_ID=your_new_access_key
+AWS_SECRET_ACCESS_KEY=your_new_secret_key
+AWS_REGION=ap-south-1
+
+# Application Secrets
+NEXTAUTH_SECRET=generate_a_random_string
+BOT_JWT_SECRET=generate_another_random_string
+ENCRYPTION_KEY=32_character_hex_string
+
+# Deployment Flags
+NEXT_PUBLIC_APP_URL=http://your-alb-dns-name (Get this after Pulumi run)
+```
+
+---
+
+## 2. Infrastructure Deployment (Pulumi)
+
+Navigate to the `infrastructure` directory and initialize the stack.
+
+```bash
+cd infrastructure
+npm install
+
+# Create a new Pulumi stack (e.g., prod)
+pulumi stack init prod
+
+# Set the AWS region
+pulumi config set aws:region ap-south-1
+
+# Deploy (this will take 15-20 mins)
+# Note: You will need to provide the S3 bucket name for deployment artifacts if asked
+pulumi up
+```
+
+**Wait for Pulumi to finish.** It will output the `LoadBalancerUrl` and the `RDS Endpoint`.
+
+---
+
+## 3. Database Setup (Prisma)
+
+Update your [.env](file:///home/sami/Documents/projects/poc/storage-browser-poc/enterprise-file-management/.env) with the new `DATABASE_URL` using the RDS endpoint from Pulumi.
+
+```bash
+# Format: postgresql://USER:PASSWORD@HOST:PORT/DATABASE
+DATABASE_URL="postgresql://myuser:mypassword123!@your-new-rds-endpoint:5432/filemanagement?schema=public"
+```
+
+Apply the migrations to the new database:
+
+```bash
+# Run from the root directory
+# Ensure npx is installed
+npx prisma migrate deploy
+npx prisma generate
+```
+
+---
+
+## 4. Seed Platform Admin
+
+Run the simplified seed script to create the initial administrative user.
+
+```bash
+# Use single quotes to avoid bash expansion issues with !
+DATABASE_URL='postgresql://myuser:mypassword123!@your-new-rds-endpoint:5432/filemanagement?schema=public' npx tsx prisma/seed.ts
+```
+
+---
+
+## 5. Cognito Configuration
+
+The infrastructure includes an AWS Cognito User Pool. You must manually add the seeded admin user to the pool:
+
+1.  Open the **AWS Console** -> **Cognito**.
+2.  Select the **User Pool** created by Pulumi.
+3.  Go to **Users** -> **Create user**.
+4.  Email: `admin@fms.com`.
+5.  Set a temporary password.
+6.  **Crucial**: Add a custom attribute `custom:role` with the value `PLATFORM_ADMIN`.
+
+---
+
+## 6. Access the Portal
+
+1.  Get the `LoadBalancerUrl` from the Pulumi output.
+2.  Open it in your browser.
+3.  Log in with `admin@fms.com`.

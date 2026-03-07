@@ -10,10 +10,11 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
 import {
   Building2, Users, HardDrive, FolderOpen, Cloud, Bot,
-  CheckCircle2, AlertCircle, Clock, RefreshCw
+  CheckCircle2, AlertCircle, Clock, RefreshCw, AlertTriangle
 } from "lucide-react"
 import Link from "next/link"
 import { formatBytes } from "@/lib/mock-data"
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 
 type Stats = Awaited<ReturnType<typeof getPlatformStats>>
 
@@ -52,13 +53,21 @@ export default function SuperAdminDashboardPage() {
   const [loading, setLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [timeRange, setTimeRange] = useState("all")
+  const [error, setError] = useState<string | null>(null)
 
   const fetchData = useCallback(async (range?: string) => {
-    const filters = { timeRange: range ?? timeRange }
-    const data = await getPlatformStats(filters)
-    setStats(data)
-    setLoading(false)
-    setRefreshing(false)
+    try {
+      setError(null)
+      const filters = { timeRange: range ?? timeRange }
+      const data = await getPlatformStats(filters)
+      setStats(data)
+    } catch (err: any) {
+      console.error("Dashboard fetch error:", err)
+      setError(err.message || "Failed to load dashboard statistics. Please try again later.")
+    } finally {
+      setLoading(false)
+      setRefreshing(false)
+    }
   }, [timeRange])
 
   useEffect(() => { fetchData() }, [timeRange])
@@ -97,6 +106,16 @@ export default function SuperAdminDashboardPage() {
           </Select>
         </div>
       </div>
+
+      {error && (
+        <Alert variant="destructive">
+          <AlertTriangle className="h-4 w-4" />
+          <AlertTitle>Error</AlertTitle>
+          <AlertDescription>
+            {error}
+          </AlertDescription>
+        </Alert>
+      )}
 
       {/* Stat Cards */}
       <div className="grid grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">

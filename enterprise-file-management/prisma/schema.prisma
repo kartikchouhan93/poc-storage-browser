@@ -17,7 +17,7 @@ model Tenant {
   updatedBy     String?
   createdByUser User?        @relation("TenantCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User?        @relation("TenantUpdatedBy", fields: [updatedBy], references: [id])
-  accounts      Account[]
+
   users         User[]
   buckets       Bucket[]
   objects       FileObject[]
@@ -27,28 +27,12 @@ model Tenant {
   botIdentities BotIdentity[]
 }
 
-model Account {
-  id                 String   @id @default(cuid())
-  name               String
-  tenantId           String
-  awsAccessKeyId     String?
-  awsSecretAccessKey String?
-  isActive           Boolean  @default(true)
-  createdAt          DateTime @default(now())
-  updatedAt          DateTime @updatedAt
-  createdBy          String?
-  updatedBy          String?
-  createdByUser      User?    @relation("AccountCreatedBy", fields: [createdBy], references: [id])
-  updatedByUser      User?    @relation("AccountUpdatedBy", fields: [updatedBy], references: [id])
-  tenant             Tenant   @relation(fields: [tenantId], references: [id])
-  buckets            Bucket[]
-}
+
 
 model Bucket {
   id            String       @id @default(cuid())
   name          String
   region        String
-  accountId     String?
   awsAccountId  String?
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
@@ -56,7 +40,6 @@ model Bucket {
   updatedBy     String?
   createdByUser User?        @relation("BucketCreatedBy", fields: [createdBy], references: [id])
   updatedByUser User?        @relation("BucketUpdatedBy", fields: [updatedBy], references: [id])
-  account       Account?     @relation(fields: [accountId], references: [id])
   awsAccount    AwsAccount?  @relation(fields: [awsAccountId], references: [id])
   tenantId      String
   tenant        Tenant       @relation(fields: [tenantId], references: [id])
@@ -122,8 +105,6 @@ model User {
   // Auditing back-references (required by named relations on other models)
   tenantsCreated   Tenant[]          @relation("TenantCreatedBy")
   tenantsUpdated   Tenant[]          @relation("TenantUpdatedBy")
-  accountsCreated  Account[]         @relation("AccountCreatedBy")
-  accountsUpdated  Account[]         @relation("AccountUpdatedBy")
   bucketsCreated   Bucket[]          @relation("BucketCreatedBy")
   bucketsUpdated   Bucket[]          @relation("BucketUpdatedBy")
   filesCreated     FileObject[]      @relation("FileObjectCreatedBy")
@@ -314,7 +295,6 @@ model AwsAccount {
   buckets Bucket[]
 
   @@unique([awsAccountId])
-  @@map("aws_accounts")
 }
 
 model MultipartUpload {
