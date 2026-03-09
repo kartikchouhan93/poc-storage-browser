@@ -20,6 +20,7 @@ import RecentActivitiesPage from "./pages/RecentActivitiesPage";
 import DoctorPage from "./pages/DoctorPage";
 import LoginPage from "./pages/LoginPage";
 import DoctorGuard from "./components/DoctorGuard";
+import IpcTimingOverlay from "./components/IpcTimingOverlay";
 import { SystemProvider } from "./contexts/SystemContext";
 
 const ProtectedRoute = ({ children }) => {
@@ -72,6 +73,7 @@ const Layout = () => {
         </div>
       </div>
       <TransferStatus />
+      <IpcTimingOverlay />
     </div>
   );
 };

@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import {
   Download, Upload, CheckCircle2, XCircle,
-  Loader2, ChevronDown, ChevronUp, Archive, FileText, X
+  Loader2, ChevronDown, ChevronUp, Archive, FileText, X,
+  Pause, Play, Square
 } from 'lucide-react';
 
 const formatBytes = (bytes) => {
@@ -102,8 +103,10 @@ const TransferStatus = () => {
   };
 
   const getBadgeColor = (status, type) => {
-    if (status === 'done')  return 'bg-emerald-100 text-emerald-700';
-    if (status === 'error') return 'bg-rose-100 text-rose-700';
+    if (status === 'done')       return 'bg-emerald-100 text-emerald-700';
+    if (status === 'error')      return 'bg-rose-100 text-rose-700';
+    if (status === 'paused')     return 'bg-amber-100 text-amber-700';
+    if (status === 'terminated') return 'bg-slate-100 text-slate-500';
     // active — color by type
     switch (type) {
       case 'upload':   return 'bg-amber-100 text-amber-700';
@@ -185,17 +188,72 @@ const TransferStatus = () => {
                       </p>
                     </div>
                   </div>
-                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full shrink-0 ${getBadgeColor(status, type)}`}>
-                    {status === 'active' ? `${Math.round(progress)}%` : status.toUpperCase()}
-                  </span>
+                  <div className="flex items-center gap-1 shrink-0">
+                    <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${getBadgeColor(status, type)}`}>
+                      {status === 'active'
+                        ? progress === 0 && transfer.speed === 0 ? '...' : `${Math.round(progress)}%`
+                        : status === 'paused' ? 'PAUSED'
+                        : status.toUpperCase()}
+                    </span>
+                    {(status === 'active' || status === 'paused') && (
+                      <>
+                        <button
+                          onClick={e => { e.stopPropagation(); status === 'paused'
+                            ? window.electronAPI.resumeTransfer(transfer.id)
+                            : window.electronAPI.pauseTransfer(transfer.id); }}
+                          className="p-1 rounded-md hover:bg-slate-200/70 text-slate-500 hover:text-slate-700 transition-colors"
+                          title={status === 'paused' ? 'Resume' : 'Pause'}
+                        >
+                          {status === 'paused'
+                            ? <Play className="w-3 h-3" />
+                            : <Pause className="w-3 h-3" />}
+                        </button>
+                        <button
+                          onClick={e => { e.stopPropagation(); window.electronAPI.terminateTransfer(transfer.id); }}
+                          className="p-1 rounded-md hover:bg-rose-100 text-slate-400 hover:text-rose-600 transition-colors"
+                          title="Terminate"
+                        >
+                          <Square className="w-3 h-3" />
+                        </button>
+                      </>
+                    )}
+                  </div>
                 </div>
 
-                {status === 'active' && (
+                {(status === 'active' || status === 'paused') && (
                   <div className="w-full h-1.5 bg-slate-200 rounded-full overflow-hidden">
                     <div
-                      className={`h-full rounded-full transition-all duration-300 ease-out ${getProgressColor(type)}`}
-                      style={{ width: `${progress}%` }}
+                      className={`h-full rounded-full transition-all duration-300 ease-out ${getProgressColor(type)} ${
+                        progress === 0 ? 'animate-pulse w-full opacity-30' :
+                        status === 'paused' ? 'opacity-50' : ''
+                      }`}
+                      style={progress > 0 ? { width: `${progress}%` } : undefined}
                     />
+                  </div>
+                )}
+
+                {/* Per-chunk progress — only shown when chunks exist */}
+                {(status === 'active' || status === 'paused') && Array.isArray(transfer.chunks) && transfer.chunks.length > 1 && (
+                  <div className="flex gap-0.5 w-full mt-0.5">
+                    {transfer.chunks.map((chunk) => {
+                      const chunkColor =
+                        chunk.status === 'done'  ? getProgressColor(type) :
+                        chunk.status === 'error' ? 'bg-rose-400' :
+                        chunk.status === 'active' ? getProgressColor(type) :
+                        'bg-slate-200';
+                      return (
+                        <div
+                          key={chunk.index}
+                          className="relative flex-1 h-1 bg-slate-200 rounded-sm overflow-hidden"
+                          title={`Chunk ${chunk.index}: ${chunk.status} ${chunk.status === 'active' ? `(${Math.round(chunk.progress)}%)` : ''}`}
+                        >
+                          <div
+                            className={`absolute inset-y-0 left-0 rounded-sm transition-all duration-200 ${chunkColor} ${chunk.status === 'active' ? 'opacity-80' : ''}`}
+                            style={{ width: chunk.status === 'done' ? '100%' : chunk.status === 'active' ? `${chunk.progress}%` : '0%' }}
+                          />
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>

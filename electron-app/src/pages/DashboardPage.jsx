@@ -31,14 +31,15 @@ function timeAgo(dateString) {
   if (minutes < 60) return `${minutes}m ago`;
   const hours = Math.floor(minutes / 60);
   if (hours < 24) return `${hours}h ago`;
-  return new Date(dateString).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  return new Date(dateString).toLocaleDateString('en-IN', { month: 'short', day: 'numeric', timeZone: 'Asia/Kolkata' });
 }
 
 function formatDate(d) {
   if (!d) return '--';
-  return new Date(d).toLocaleString('en-US', {
+  return new Date(d).toLocaleString('en-IN', {
     month: 'short', day: 'numeric',
     hour: '2-digit', minute: '2-digit',
+    timeZone: 'Asia/Kolkata',
   });
 }
 
@@ -154,10 +155,12 @@ export default function DashboardPage() {
         window.electronAPI.getSyncConfigs(),
       ]);
 
-      // Last sync time across all configs
-      const lastSyncRes = await window.electronAPI.dbQuery(
-        'SELECT "lastSync" FROM "SyncConfig" WHERE "lastSync" IS NOT NULL ORDER BY "lastSync" DESC LIMIT 1', []
-      );
+      // Last sync time — derive from already-scoped getSyncConfigs result (avoids raw unscoped dbQuery)
+      const lastSync = (configRes || [])
+        .map(c => c.lastSync)
+        .filter(Boolean)
+        .sort()
+        .pop() || null;
 
       const activities = actRes || [];
       const successCount = activities.filter(a => a.status === 'SUCCESS').length;
@@ -167,7 +170,7 @@ export default function DashboardPage() {
         buckets: parseInt(bucketRes.rows[0]?.count || 0),
         files: parseInt(fileRes.rows[0]?.count || 0),
         totalSize: parseInt(fileRes.rows[0]?.total || 0),
-        lastSync: lastSyncRes.rows[0]?.lastSync || null,
+        lastSync: lastSync,
         syncConfigs: (configRes || []).length,
         activeConfigs: (configRes || []).filter(c => c.isActive).length,
         recentSuccess: successCount,

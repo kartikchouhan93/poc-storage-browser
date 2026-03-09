@@ -33,7 +33,7 @@ const formatBytes = (bytes) => {
 const formatDate = (dateString) => {
   if (!dateString) return '--';
   const d = new Date(dateString);
-  return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric" });
+  return d.toLocaleDateString("en-IN", { month: "short", day: "numeric", year: "numeric", timeZone: 'Asia/Kolkata' });
 };
 
 const getFileType = (file) => {

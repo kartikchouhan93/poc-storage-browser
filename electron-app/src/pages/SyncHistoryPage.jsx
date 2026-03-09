@@ -60,9 +60,10 @@ export default function SyncHistoryPage() {
     const formatDate = (dateString) => {
         if (!dateString) return '--';
         const d = new Date(dateString);
-        return d.toLocaleString('en-US', {
+        return d.toLocaleString('en-IN', {
             month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit',
+            timeZone: 'Asia/Kolkata',
         });
     };
 
@@ -73,10 +74,14 @@ export default function SyncHistoryPage() {
         else if (action === 'DOWNLOAD') colorClasses = 'bg-emerald-50 text-emerald-700';
         else if (action === 'SKIP') colorClasses = 'bg-slate-100 text-slate-500';
         else if (action === 'DELETE') colorClasses = 'bg-red-50 text-red-600';
+        else if (action === 'ZIP') colorClasses = 'bg-violet-50 text-violet-700';
+        else if (action === 'DIAGNOSTIC') colorClasses = 'bg-indigo-50 text-indigo-700';
         return (
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase ${colorClasses}`}>
                 {action === 'UPLOAD' && <Upload className="h-2.5 w-2.5" />}
                 {action === 'DOWNLOAD' && <Download className="h-2.5 w-2.5" />}
+                {action === 'ZIP' && <span>📦</span>}
+                {action === 'DIAGNOSTIC' && <span>🩺</span>}
                 {action}
             </span>
         );
@@ -97,8 +102,9 @@ export default function SyncHistoryPage() {
         const total = activities.filter(a => a.action !== 'SKIP').length;
         const uploads = activities.filter(a => a.action === 'UPLOAD' && a.status === 'SUCCESS').length;
         const downloads = activities.filter(a => a.action === 'DOWNLOAD' && a.status === 'SUCCESS').length;
+        const zips = activities.filter(a => a.action === 'ZIP' && a.status === 'SUCCESS').length;
         const failed = activities.filter(a => a.status === 'FAILED').length;
-        return { total, uploads, downloads, failed };
+        return { total, uploads, downloads, zips, failed };
     }, [activities]);
 
     return (
@@ -126,7 +132,7 @@ export default function SyncHistoryPage() {
             </div>
 
             {/* ── Summary Stats ───────────────────────────────────────────────── */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 sm:grid-cols-5 gap-4">
                 <div className="rounded-xl border bg-white p-4 shadow-sm">
                     <p className="text-[11px] text-slate-500 font-bold uppercase tracking-wider">Total Files</p>
                     <p className="text-2xl font-black text-slate-900 mt-1">{stats.total}</p>
@@ -138,6 +144,10 @@ export default function SyncHistoryPage() {
                 <div className="rounded-xl border bg-white p-4 shadow-sm">
                     <p className="text-[11px] text-emerald-600 font-bold uppercase tracking-wider">Downloads</p>
                     <p className="text-2xl font-black text-emerald-600 mt-1">{stats.downloads}</p>
+                </div>
+                <div className="rounded-xl border bg-white p-4 shadow-sm">
+                    <p className="text-[11px] text-violet-600 font-bold uppercase tracking-wider">📦 Zips</p>
+                    <p className="text-2xl font-black text-violet-600 mt-1">{stats.zips}</p>
                 </div>
                 <div className="rounded-xl border bg-white p-4 shadow-sm border-rose-100">
                     <p className="text-[11px] text-rose-600 font-bold uppercase tracking-wider">Failed</p>

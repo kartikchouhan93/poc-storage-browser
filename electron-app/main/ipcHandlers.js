@@ -77,6 +77,18 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
     return backend.status.getTransfers();
   });
 
+  ipcMain.handle("pause-transfer", (_, transferId) => {
+    return backend.status.pauseTransfer(transferId);
+  });
+
+  ipcMain.handle("resume-transfer", (_, transferId) => {
+    return backend.status.resumeTransfer(transferId);
+  });
+
+  ipcMain.handle("terminate-transfer", (_, transferId) => {
+    return backend.status.terminateTransfer(transferId);
+  });
+
   // 4. Database (accepts both { sql, params } from preload and legacy { text, params })
   ipcMain.handle("db-query", async (event, args) => {
     try {
@@ -90,12 +102,17 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
 
   // 5. Sync
   ipcMain.handle("init-sync", (event, token) => {
+    const session = authManager.getSession();
+    const userId = session?.email || session?.username || null;
+    const botId = botAuth.getBotId() || null;
     backend.sync.init(
       token,
       () => {
         if (mainWindow) mainWindow.webContents.send("auth-expired");
       },
       downloadingPaths,
+      userId,
+      botId,
     );
     return true;
   });
@@ -180,10 +197,17 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
     try {
       let query = `SELECT * FROM "LocalSyncActivity"`;
       let params = [];
+      const conditions = [];
+      
+      // If configId is specified, filter to that config only
       if (configId) {
-        query += ` WHERE "configId" = $1`;
+        conditions.push(`"configId" = $${params.length + 1}`);
         params.push(configId);
       }
+      // If no configId (Recent Activities page), include all activities
+      // This ensures diagnostics (which have configId=null) are always visible
+      
+      if (conditions.length > 0) query += ` WHERE ` + conditions.join(' AND ');
       query += ` ORDER BY "createdAt" DESC LIMIT 200`;
       const result = await backend.db.query(query, params);
       return result.rows;
@@ -228,9 +252,16 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   // 8. Configurable Sync
   ipcMain.handle("get-sync-configs", async () => {
     try {
-      const configs = await backend.db.query(
-        `SELECT * FROM "SyncConfig" ORDER BY "createdAt" DESC`,
-      );
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+      let sql = `SELECT * FROM "SyncConfig"`;
+      const params = [];
+      if (userId) {
+        sql += ` WHERE ("userId" = $1 OR "userId" IS NULL)`;
+        params.push(userId);
+      }
+      sql += ` ORDER BY "createdAt" DESC`;
+      const configs = await backend.db.query(sql, params);
       const configsData = configs.rows;
       for (let config of configsData) {
         const mappings = await backend.db.query(
@@ -256,10 +287,13 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
         const id = "cfg-" + Date.now();
         const dir = direction || "DOWNLOAD";
         const watcher = dir === "UPLOAD" ? (useWatcher !== false ? 1 : 0) : 0;
+        const session = authManager.getSession();
+        const userId = session?.email || session?.username || null;
+        const botId = botAuth.getBotId() || null;
 
         await backend.db.query(
-          `INSERT INTO "SyncConfig" (id, name, "intervalMinutes", "direction", "useWatcher") VALUES ($1, $2, $3, $4, $5)`,
-          [id, name, intervalMinutes, dir, watcher],
+          `INSERT INTO "SyncConfig" (id, name, "intervalMinutes", "direction", "useWatcher", "userId", "botId") VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+          [id, name, intervalMinutes, dir, watcher, userId, botId],
         );
 
         for (const map of mappings) {
@@ -284,6 +318,37 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
         return { success: true, id };
       } catch (err) {
         console.error("[IPC] create-sync-config error:", err);
+        return { success: false, error: err.message };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    "update-sync-config",
+    async (event, { id, name, intervalMinutes, mappings, direction, useWatcher }) => {
+      try {
+        const dir = direction || "DOWNLOAD";
+        const watcher = dir === "UPLOAD" ? (useWatcher !== false ? 1 : 0) : 0;
+
+        await backend.db.query(
+          `UPDATE "SyncConfig" SET name = $1, "intervalMinutes" = $2, "direction" = $3, "useWatcher" = $4 WHERE id = $5`,
+          [name, intervalMinutes, dir, watcher, id],
+        );
+
+        // Replace mappings
+        await backend.db.query(`DELETE FROM "SyncMapping" WHERE "configId" = $1`, [id]);
+        for (const map of mappings) {
+          const mapId = "map-" + Date.now() + Math.random().toString(36).substring(7);
+          await backend.db.query(
+            `INSERT INTO "SyncMapping" (id, "configId", "localPath", "bucketId", "shouldZip") VALUES ($1, $2, $3, $4, $5)`,
+            [mapId, id, map.localPath, map.bucketId, map.shouldZip ? 1 : 0],
+          );
+        }
+
+        if (backend.sync.reloadConfigs) backend.sync.reloadConfigs();
+        return { success: true };
+      } catch (err) {
+        console.error("[IPC] update-sync-config error:", err);
         return { success: false, error: err.message };
       }
     },

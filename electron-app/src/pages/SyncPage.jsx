@@ -19,6 +19,7 @@ export default function SyncPage() {
     
     // Modal states
     const [showModal, setShowModal] = useState(false);
+    const [editingConfigId, setEditingConfigId] = useState(null); // null = create, string = edit
     const [newConfigName, setNewConfigName] = useState('');
     const [newConfigInterval, setNewConfigInterval] = useState(5);
     const [newDirection, setNewDirection] = useState('DOWNLOAD');
@@ -132,24 +133,35 @@ export default function SyncPage() {
         if (!newConfigName.trim() || newMappings.length === 0) return;
         if (newMappings.some(m => !m.localPath || !m.bucketId)) return;
         
+        const payload = {
+            name: newConfigName,
+            intervalMinutes: parseInt(newConfigInterval),
+            direction: newDirection,
+            useWatcher: newDirection === 'UPLOAD' ? newUseWatcher : false,
+            mappings: newMappings
+        };
+
         try {
-            await window.electronAPI.createSyncConfig({
-                name: newConfigName,
-                intervalMinutes: parseInt(newConfigInterval),
-                direction: newDirection,
-                useWatcher: newDirection === 'UPLOAD' ? newUseWatcher : false,
-                mappings: newMappings
-            });
-            setShowModal(false);
-            setNewConfigName('');
-            setNewMappings([]);
-            setNewConfigInterval(5);
-            setNewDirection('DOWNLOAD');
-            setNewUseWatcher(true);
+            if (editingConfigId) {
+                await window.electronAPI.updateSyncConfig({ id: editingConfigId, ...payload });
+            } else {
+                await window.electronAPI.createSyncConfig(payload);
+            }
+            closeModal();
             fetchConfigs();
         } catch (err) {
             console.error('Failed to save config', err);
         }
+    };
+
+    const closeModal = () => {
+        setShowModal(false);
+        setEditingConfigId(null);
+        setNewConfigName('');
+        setNewMappings([]);
+        setNewConfigInterval(5);
+        setNewDirection('DOWNLOAD');
+        setNewUseWatcher(true);
     };
 
     const handleDeleteConfig = async (id) => {
@@ -168,6 +180,21 @@ export default function SyncPage() {
         setNewConfigInterval(5);
         setNewDirection('DOWNLOAD');
         setNewUseWatcher(true);
+        setEditingConfigId(null);
+        setShowModal(true);
+    };
+
+    const openEditModal = (config) => {
+        setEditingConfigId(config.id);
+        setNewConfigName(config.name);
+        setNewConfigInterval(config.intervalMinutes || 5);
+        setNewDirection(config.direction || 'DOWNLOAD');
+        setNewUseWatcher(config.useWatcher === 1 || config.useWatcher === true);
+        setNewMappings((config.mappings || []).map(m => ({
+            localPath: m.localPath,
+            bucketId: m.bucketId,
+            shouldZip: m.shouldZip === 1 || m.shouldZip === true,
+        })));
         setShowModal(true);
     };
 
@@ -175,9 +202,10 @@ export default function SyncPage() {
     const formatDate = (dateString) => {
         if (!dateString) return '--';
         const d = new Date(dateString);
-        return d.toLocaleString('en-US', {
+        return d.toLocaleString('en-IN', {
             month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit',
+            timeZone: 'Asia/Kolkata',
         });
     };
 
@@ -232,7 +260,7 @@ export default function SyncPage() {
                                 const watcherActive = isUpload && config.useWatcher;
 
                                 return (
-                                    <div key={config.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow relative group">
+                                    <div key={config.id} className="bg-white border border-slate-200 rounded-xl p-5 shadow-sm hover:shadow-md transition-shadow relative group cursor-pointer" onClick={() => openEditModal(config)}>
                                         <div className="flex justify-between items-start mb-3">
                                             <div className="flex items-center gap-2">
                                                 {/* Direction badge */}
@@ -266,7 +294,7 @@ export default function SyncPage() {
                                                 </div>
                                             </div>
                                             <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                <button onClick={() => handleDeleteConfig(config.id)} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-md transition-colors" title="Delete Config">
+                                                <button onClick={(e) => { e.stopPropagation(); handleDeleteConfig(config.id); }} className="p-1.5 text-rose-500 hover:bg-rose-50 rounded-md transition-colors" title="Delete Config">
                                                     <Trash2 className="h-4 w-4" />
                                                 </button>
                                             </div>
@@ -301,13 +329,13 @@ export default function SyncPage() {
                                                     size="sm" 
                                                     variant="outline" 
                                                     className="h-7 text-xs px-3 bg-blue-50 text-blue-700 hover:bg-blue-100 border-blue-200" 
-                                                    onClick={() => handleSyncConfigNow(config.id)}
+                                                    onClick={(e) => { e.stopPropagation(); handleSyncConfigNow(config.id); }}
                                                     disabled={isSyncing}
                                                 >
                                                     <RefreshCw className={`h-3 w-3 mr-1 ${isSyncing ? 'animate-spin' : ''}`} />
                                                     {isSyncing ? 'Syncing...' : 'Sync Now'}
                                                 </Button>
-                                                <Button size="sm" variant="outline" className="h-7 text-xs px-3 bg-white" onClick={() => navigate(`/sync/${config.id}`)}>
+                                                <Button size="sm" variant="outline" className="h-7 text-xs px-3 bg-white" onClick={(e) => { e.stopPropagation(); navigate(`/sync/${config.id}`); }}>
                                                     <History className="h-3 w-3 mr-1" /> History
                                                 </Button>
                                             </div>
@@ -324,8 +352,8 @@ export default function SyncPage() {
                 <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
                     <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[90vh]">
                         <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                            <h2 className="text-lg font-bold text-slate-800">New Sync Configuration</h2>
-                            <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600 p-1">
+                            <h2 className="text-lg font-bold text-slate-800">{editingConfigId ? 'Edit Sync Configuration' : 'New Sync Configuration'}</h2>
+                            <button onClick={closeModal} className="text-slate-400 hover:text-slate-600 p-1">
                                 <XCircle className="h-5 w-5" />
                             </button>
                         </div>
@@ -530,14 +558,14 @@ export default function SyncPage() {
                         </div>
 
                         <div className="px-6 py-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
-                            <Button type="button" variant="ghost" className="text-slate-500 hover:text-slate-800 border bg-white border-slate-200" onClick={() => setShowModal(false)}>Cancel</Button>
+                            <Button type="button" variant="ghost" className="text-slate-500 hover:text-slate-800 border bg-white border-slate-200" onClick={closeModal}>Cancel</Button>
                             <Button 
                                 type="button"
                                 className="bg-blue-600 hover:bg-blue-700 shadow-sm"
                                 disabled={!newConfigName.trim() || newMappings.length === 0 || newMappings.some(m => !m.localPath || !m.bucketId)}
                                 onClick={handleSaveConfig}
                             >
-                                Save Configuration
+                                {editingConfigId ? 'Save Changes' : 'Save Configuration'}
                             </Button>
                         </div>
                     </div>

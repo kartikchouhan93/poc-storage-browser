@@ -64,7 +64,7 @@ export default function HeartbeatRibbon({ logs, currentStatus }) {
     const diff = Math.floor((Date.now() - date.getTime()) / 1000);
     if (diff < 60) return `${diff}s ago`;
     if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
-    return date.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' });
   }
 
   return (
