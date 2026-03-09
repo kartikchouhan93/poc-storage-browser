@@ -90,9 +90,14 @@ class SyncManager {
 
     async syncAll() {
         // Build incremental sync param — pass lastSyncedAt if we have one
-        const lastSyncRow = await database.query(
-            `SELECT value FROM "KVStore" WHERE key = 'lastFullSyncAt' LIMIT 1`
-        ).catch(() => ({ rows: [] }));
+        let lastSyncRow = { rows: [] };
+        try {
+            lastSyncRow = await database.query(
+                `SELECT value FROM "KVStore" WHERE key = 'lastFullSyncAt' LIMIT 1`
+            );
+        } catch (err) {
+            console.warn('[SyncManager] Could not fetch lastFullSyncAt:', err.message);
+        }
         const lastSyncAt = lastSyncRow.rows[0]?.value || null;
 
         const params = lastSyncAt ? `?updatedSince=${encodeURIComponent(lastSyncAt)}` : '';
@@ -507,15 +512,5 @@ class SyncManager {
 }
 
 module.exports = new SyncManager();
-
-        return new Promise((resolve, reject) => {
-            const hash = crypto.createHash('md5');
-            const stream = fs.createReadStream(filePath);
-            stream.on('data', data => hash.update(data));
-            stream.on('end', () => resolve(hash.digest('hex')));
-            stream.on('error', reject);
-        });
-    }
-}
 
 module.exports = new SyncManager();

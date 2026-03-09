@@ -256,6 +256,7 @@ app.whenReady().then(async () => {
         if (mainWindow) mainWindow.webContents.send('auth-expired');
       });
       backend.healthReporter.start(ROOT_PATH);
+      backend.healthReporter.triggerReport();
       console.log(`[Main] Bot re-handshake successful — heartbeat + health reporter started (mode=bot)`);
     } catch (err) {
       console.error(`[Main] Bot re-handshake failed on startup:`, err.message);
