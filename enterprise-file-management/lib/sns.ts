@@ -10,13 +10,13 @@ export async function sendShareEmailNotification({
   shareUrl,
   expiryDate,
   downloadLimit,
-  hasPassword,
+  password,
 }: {
   toEmail: string;
   shareUrl: string;
   expiryDate: Date;
   downloadLimit: number;
-  hasPassword: boolean;
+  password?: string;
 }) {
   const subject = "A file has been shared with you";
   let message = `Hello,\n\nA file has been shared with you via our Secure File Management System.\n\n`;
@@ -24,8 +24,8 @@ export async function sendShareEmailNotification({
   message += `Expires: ${expiryDate.toLocaleString()}\n`;
   message += `Download Limit: ${downloadLimit} downloads\n`;
 
-  if (hasPassword) {
-    message += `\nThis share is password protected. You will need to enter the password provided by the sender to access the file.\n`;
+  if (password) {
+    message += `\nThis share is password protected. The sender has provided the following password for you to access the file:\nPassword: ${password}\n`;
   }
 
   message += `\nThank you,\nFMS Team`;

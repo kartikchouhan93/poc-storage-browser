@@ -26,6 +26,7 @@ import {
   Star,
   Trash2,
   Upload,
+  UploadCloud,
   Users,
   Video,
 } from "lucide-react"
@@ -71,6 +72,16 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
@@ -125,6 +136,7 @@ import { fetchWithAuth } from "@/lib/api";
 import { getAuthHeader } from "@/lib/token";
 import { SearchInput } from "./search-input";
 import { useDownload } from "@/components/providers/download-provider";
+import { useUpload } from "@/components/providers/upload-provider";
 import { ShareModal } from "@/components/share-modal";
 import { FileViewer } from "./file-viewer";
 
@@ -135,12 +147,16 @@ import { FileViewer } from "./file-viewer";
 export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, setPath, refreshTrigger = 0 }: FileBrowserProps) {
   const { can } = usePermission();
   const { addDownloads } = useDownload();
+  const { files: uploadQueue, setIsIndicatorOpen } = useUpload()
   const [viewMode, setViewMode] = React.useState<ViewMode>("list")
   const [sortKey, setSortKey] = React.useState<SortKey>("name")
   const [sortOrder, setSortOrder] = React.useState<"asc" | "desc">("asc")
   const [selected, setSelected] = React.useState<Set<string>>(new Set())
   const [files, setFiles] = React.useState<any[]>([])
   const [loading, setLoading] = React.useState(true)
+  const [deleteOpen, setDeleteOpen] = React.useState(false)
+  const [fileToDelete, setFileToDelete] = React.useState<any>(null)
+  const [bulkDeleteOpen, setBulkDeleteOpen] = React.useState(false)
   const [renameOpen, setRenameOpen] = React.useState(false)
   const [fileToRename, setFileToRename] = React.useState<any>(null)
   const [newName, setNewName] = React.useState("")
@@ -265,36 +281,44 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
     }
 
     if (action === "Delete") {
-      if (!confirm(`Are you sure you want to delete "${file.name}"?`)) return
-
-      try {
-        const res = await fetchWithAuth(`/api/files/${file.id}`, {
-          method: "DELETE",
-        })
-        if (res.ok) {
-          toast.success("File deleted successfully")
-          fetchFiles()
-          if (selected.has(file.id)) toggleSelect(file.id)
-        } else {
-          toast.error("Failed to delete file")
-        }
-      } catch (error) {
-        toast.error("Error deleting file")
-      }
+      setFileToDelete(file)
+      setDeleteOpen(true)
       return
     }
 
     if (action === "Download") {
       addDownloads([{ id: file.id, name: file.name, bucketId: file.bucketId || bucketId || "", parentId: file.parentId || null, key: file.key }])
-      return
     }
-
-    toast.success(`${action}: ${file.name}`)
   }
 
-  const handleBulkDelete = async () => {
-    if (!confirm(`Are you sure you want to delete ${selected.size} items?`)) return
+  const confirmDelete = async () => {
+    if (!fileToDelete) return
+    
+    try {
+      const res = await fetchWithAuth(`/api/files/${fileToDelete.id}`, {
+        method: "DELETE",
+      })
+      if (res.ok) {
+        toast.success("File deleted successfully")
+        fetchFiles()
+        if (selected.has(fileToDelete.id)) toggleSelect(fileToDelete.id)
+      } else {
+        toast.error("Failed to delete file")
+      }
+    } catch (error) {
+      toast.error("Error deleting file")
+    } finally {
+      setDeleteOpen(false)
+      setFileToDelete(null)
+    }
+  }
 
+  const handleBulkDeleteBtnClick = () => {
+    if (selected.size === 0) return
+    setBulkDeleteOpen(true)
+  }
+
+  const confirmBulkDelete = async () => {
     let successCount = 0
     let failCount = 0
 
@@ -324,6 +348,8 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
     if (failCount > 0) {
       toast.error(`Failed to delete ${failCount} items`)
     }
+    
+    setBulkDeleteOpen(false)
   }
 
   const confirmRename = async () => {
@@ -532,6 +558,16 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
                 <Upload className="h-4 w-4" />
                 Upload
               </Button>
+              {uploadQueue.length > 0 && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setIsIndicatorOpen(true)}
+                >
+                  <UploadCloud className="mr-2 h-4 w-4" />
+                  Uploads ({uploadQueue.length})
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -560,7 +596,7 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
             variant="outline"
             size="sm"
             className="h-7 text-xs text-destructive hover:bg-destructive hover:text-destructive-foreground"
-            onClick={handleBulkDelete}
+            onClick={handleBulkDeleteBtnClick}
           >
             <Trash2 className="mr-1 h-3 w-3" />
             Delete
@@ -809,6 +845,43 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
           </DialogFooter>
         </DialogContent>
       </Dialog>
+
+      {/* Delete Confirmation Dialog */}
+      <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete the file
+              "{fileToDelete?.name}" from your cloud storage.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* Bulk Delete Confirmation Dialog */}
+      <AlertDialog open={bulkDeleteOpen} onOpenChange={setBulkDeleteOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This action cannot be undone. This will permanently delete {selected.size} selected items from your cloud storage.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel>Cancel</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmBulkDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+              Delete All
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
       
       {/* Share Modal */}
       {fileToShare && (

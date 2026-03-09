@@ -3,6 +3,7 @@
 import * as React from 'react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { toast } from 'sonner';
 
 export default function TenantSettingsPage() {
   const [tenantName, setTenantName] = React.useState('');
@@ -18,7 +19,7 @@ export default function TenantSettingsPage() {
     // PUT /api/tenant/settings
     setTimeout(() => {
       setSaving(false);
-      alert('Tenant updated successfully.');
+      toast.success('Tenant updated successfully.');
     }, 1000);
   };
 

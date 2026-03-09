@@ -31,6 +31,16 @@ import {
     DialogHeader,
     DialogTitle,
 } from "@/components/ui/dialog"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Label } from "@/components/ui/label"
 import { toast } from "sonner"
 import { RefreshCw, MoreHorizontal, Edit, Power, Trash2, CheckCircle2, XCircle } from "lucide-react"
@@ -56,6 +66,8 @@ export function AccountList({ initialAccounts }: AccountListProps) {
     const [syncing, setSyncing] = useState<string | null>(null)
     const [editOpen, setEditOpen] = useState(false)
     const [editingAccount, setEditingAccount] = useState<Account | null>(null)
+    const [deleteOpen, setDeleteOpen] = useState(false)
+    const [accountToDelete, setAccountToDelete] = useState<Account | null>(null)
 
     const handleSync = async (accountId: string) => {
         setSyncing(accountId)
@@ -129,11 +141,11 @@ export function AccountList({ initialAccounts }: AccountListProps) {
         }
     }
 
-    const handleDelete = async (account: Account) => {
-        if (!confirm(`Are you sure you want to delete account "${account.name}"? This cannot be undone.`)) return
+    const confirmDelete = async () => {
+        if (!accountToDelete) return
 
         try {
-            const res = await fetchWithAuth(`/api/accounts/${account.id}`, {
+            const res = await fetchWithAuth(`/api/accounts/${accountToDelete.id}`, {
                 method: "DELETE",
             })
 
@@ -146,7 +158,15 @@ export function AccountList({ initialAccounts }: AccountListProps) {
             }
         } catch {
             toast.error("Error deleting account")
+        } finally {
+            setDeleteOpen(false)
+            setAccountToDelete(null)
         }
+    }
+
+    const handleDeleteClick = (account: Account) => {
+        setAccountToDelete(account)
+        setDeleteOpen(true)
     }
 
     const filteredAccounts = initialAccounts.filter(account =>
@@ -301,7 +321,7 @@ export function AccountList({ initialAccounts }: AccountListProps) {
                                                         <DropdownMenuSeparator />
                                                         <DropdownMenuItem
                                                             className="text-red-600 focus:text-red-600"
-                                                            onClick={() => handleDelete(account)}
+                                                            onClick={() => handleDeleteClick(account)}
                                                         >
                                                             <Trash2 className="mr-2 h-4 w-4" />
                                                             Delete
@@ -317,6 +337,23 @@ export function AccountList({ initialAccounts }: AccountListProps) {
                     </Table>
                 </CardContent>
             </Card>
+
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete account "{accountToDelete?.name}"? This cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

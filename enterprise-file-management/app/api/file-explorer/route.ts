@@ -101,10 +101,15 @@ export async function GET(request: NextRequest) {
       }
     } else if (bucketId) {
       // Verify Specific Bucket Access
-      const bucket = await prisma.bucket.findUnique({ where: { id: bucketId } });
+      const bucket = await prisma.bucket.findUnique({
+        where: { id: bucketId },
+      });
 
       if (!bucket)
-        return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+        return NextResponse.json(
+          { error: "Bucket not found" },
+          { status: 404 },
+        );
 
       const hasAccess = await checkPermission(user, "READ", {
         tenantId: bucket.tenantId,
@@ -249,7 +254,8 @@ export async function GET(request: NextRequest) {
           ? "folder"
           : f.mimeType?.includes("image")
             ? "image"
-            : f.mimeType?.includes("pdf")
+            : f.mimeType?.includes("pdf") ||
+                (f.name as string).toLowerCase().endsWith(".pdf")
               ? "pdf"
               : "document",
         size: Number(f.size) || 0,

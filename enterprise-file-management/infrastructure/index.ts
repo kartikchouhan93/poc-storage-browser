@@ -75,6 +75,25 @@ const dbGrant = new command.local.Command(
   { dependsOn: [db] },
 );
 
+// Calculate a hash of the prisma directory to trigger migrations on any schema or migration changes.
+const prismaHash = new command.local.Command("prisma-hash", {
+  create:
+    "find ../prisma -type f -exec sha256sum {} + | sort | sha256sum | awk '{print $1}'",
+});
+
+// Automate Prisma migrations: run 'prisma migrate deploy' as part of the Pulumi update.
+// This ensures that table schemas are updated before the app container starts.
+const prismaMigrate = new command.local.Command(
+  "prisma-migrate",
+  {
+    create: pulumi.interpolate`DATABASE_URL="postgresql://myuser:mypassword123%21@${db.endpoint}/filemanagement?schema=public" npx prisma migrate deploy`,
+    // Re-run if the DB endpoint, schema, or migrations change
+    triggers: [db.endpoint, prismaHash.stdout],
+    dir: "../", // Run from the project root where prisma/ resides
+  },
+  { dependsOn: [dbGrant] },
+);
+
 // Security Group for Application (ALB + Tasks)
 const appSg = new aws.ec2.SecurityGroup("app-sg", {
   vpcId: vpc.vpcId,
@@ -168,6 +187,51 @@ const fileSyncEventBus = new aws.cloudwatch.EventBus("cams-file-events", {
   tags: { Purpose: "file-sync-cross-account" },
 });
 
+// Dead-letter queue for failed file-sync messages
+const fileSyncDlq = new aws.sqs.Queue("file-sync-dlq", {
+  messageRetentionSeconds: 1209600, // 14 days
+  tags: { Purpose: "file-sync-dead-letter" },
+});
+
+// Main SQS queue — receives events from both same-account S3 and cross-account EventBridge
+const fileSyncQueue = new aws.sqs.Queue("file-sync-queue", {
+  visibilityTimeoutSeconds: 60, // Must be >= Lambda timeout
+  messageRetentionSeconds: 86400, // 1 day
+  redrivePolicy: fileSyncDlq.arn.apply((arn) =>
+    JSON.stringify({ deadLetterTargetArn: arn, maxReceiveCount: 3 }),
+  ),
+  tags: { Purpose: "file-sync" },
+});
+
+// Queue policy: allow S3 (same-account direct notifications) and EventBridge to send messages
+const fileSyncQueuePolicy = new aws.sqs.QueuePolicy("file-sync-queue-policy", {
+  queueUrl: fileSyncQueue.url,
+  policy: pulumi.all([fileSyncQueue.arn]).apply(([queueArn]) =>
+    JSON.stringify({
+      Version: "2012-10-17",
+      Statement: [
+        {
+          Sid: "AllowS3DirectNotifications",
+          Effect: "Allow",
+          Principal: { Service: "s3.amazonaws.com" },
+          Action: "sqs:SendMessage",
+          Resource: queueArn,
+          Condition: {
+            ArnLike: { "aws:SourceArn": "arn:aws:s3:::*" },
+          },
+        },
+        {
+          Sid: "AllowEventBridgeForwarding",
+          Effect: "Allow",
+          Principal: { Service: "events.amazonaws.com" },
+          Action: "sqs:SendMessage",
+          Resource: queueArn,
+        },
+      ],
+    }),
+  ),
+});
+
 const snsSubscription = new aws.sns.TopicSubscription(
   "fms-share-notifications-sub",
   {
@@ -234,109 +298,117 @@ new aws.iam.RolePolicyAttachment("app-execution-role-policy", {
 const cluster = new aws.ecs.Cluster("app-cluster");
 
 // Fargate Service
-const service = new awsx.ecs.FargateService("app-svc", {
-  cluster: cluster.arn,
-  taskDefinitionArgs: {
-    taskRole: {
-      roleArn: taskRole.arn,
-    },
-    executionRole: {
-      roleArn: executionRole.arn,
-    },
-    container: {
-      name: "app",
-      image: image.imageUri,
-      cpu: 512,
-      memory: 1024,
-      essential: true,
-      logConfiguration: {
-        logDriver: "awslogs",
-        options: {
-          "awslogs-group": appLogGroup.name,
-          "awslogs-region": process.env.AWS_REGION || "ap-south-1",
-          "awslogs-stream-prefix": "ecs",
-        },
+const service = new awsx.ecs.FargateService(
+  "app-svc",
+  {
+    cluster: cluster.arn,
+    taskDefinitionArgs: {
+      taskRole: {
+        roleArn: taskRole.arn,
       },
-      portMappings: [
-        {
-          containerPort: 3000,
-          targetGroup: alb.defaultTargetGroup,
+      executionRole: {
+        roleArn: executionRole.arn,
+      },
+      container: {
+        name: "app",
+        image: image.imageUri,
+        cpu: 512,
+        memory: 1024,
+        essential: true,
+        logConfiguration: {
+          logDriver: "awslogs",
+          options: {
+            "awslogs-group": appLogGroup.name,
+            "awslogs-region": process.env.AWS_REGION || "ap-south-1",
+            "awslogs-stream-prefix": "ecs",
+          },
         },
-      ],
-      environment: [
-        {
-          name: "DATABASE_URL",
-          value: pulumi.interpolate`postgresql://myuser:mypassword123%21@${db.endpoint}/filemanagement?schema=public`,
-        },
-        { name: "JWT_SECRET", value: "supersecretkey123" },
-        {
-          name: "ENCRYPTION_KEY",
-          value:
-            "dfa35e10f81315ea9e69e3dff3f7a4ac6096a0828052aaf09f38bc11600d4a53",
-        },
-        // Cognito and AWS config loaded from .env
-        { name: "AWS_REGION", value: process.env.AWS_REGION || "ap-south-1" },
-        {
-          name: "COGNITO_USER_POOL_ID",
-          value: process.env.COGNITO_USER_POOL_ID || "",
-        },
-        {
-          name: "COGNITO_CLIENT_ID",
-          value: process.env.COGNITO_CLIENT_ID || "",
-        },
-        {
-          name: "COGNITO_CLIENT_SECRET",
-          value: process.env.COGNITO_CLIENT_SECRET || "",
-        },
-        {
-          name: "COGNITO_DOMAIN_PREFIX",
-          value: process.env.COGNITO_DOMAIN_PREFIX || "",
-        },
-        {
-          name: "OAUTH_CLIENT_ID",
-          value: process.env.OAUTH_CLIENT_ID || "",
-        },
-        {
-          name: "OAUTH_CLIENT_SECRET",
-          value: process.env.OAUTH_CLIENT_SECRET || "",
-        },
-        {
-          name: "SNS_SHARE_NOTIFICATIONS_TOPIC_ARN",
-          value: snsTopic.arn,
-        },
-        {
-          name: "FILE_SYNC_EVENT_BUS_ARN",
-          value: fileSyncEventBus.arn,
-        },
-        {
-          name: "AWS_HUB_ACCOUNT_ID",
-          value: process.env.AWS_HUB_ACCOUNT_ID || "",
-        },
-        {
-          name: "ALLOWED_ORIGINS",
-          value: process.env.ALLOWED_ORIGINS || "",
-        },
-        {
-          name: "BOT_JWT_SECRET",
-          value: process.env.BOT_JWT_SECRET || "",
-        },
-        {
-          name: "COGNITO_DOMAIN",
-          value: process.env.COGNITO_DOMAIN || "",
-        },
-        {
-          name: "NEXT_PUBLIC_APP_URL",
-          value: process.env.NEXT_PUBLIC_APP_URL || "",
-        },
-      ],
+        portMappings: [
+          {
+            containerPort: 3000,
+            targetGroup: alb.defaultTargetGroup,
+          },
+        ],
+        environment: [
+          {
+            name: "DATABASE_URL",
+            value: pulumi.interpolate`postgresql://myuser:mypassword123%21@${db.endpoint}/filemanagement?schema=public`,
+          },
+          { name: "JWT_SECRET", value: "supersecretkey123" },
+          {
+            name: "ENCRYPTION_KEY",
+            value:
+              "dfa35e10f81315ea9e69e3dff3f7a4ac6096a0828052aaf09f38bc11600d4a53",
+          },
+          // Cognito and AWS config loaded from .env
+          { name: "AWS_REGION", value: process.env.AWS_REGION || "ap-south-1" },
+          {
+            name: "COGNITO_USER_POOL_ID",
+            value: process.env.COGNITO_USER_POOL_ID || "",
+          },
+          {
+            name: "COGNITO_CLIENT_ID",
+            value: process.env.COGNITO_CLIENT_ID || "",
+          },
+          {
+            name: "COGNITO_CLIENT_SECRET",
+            value: process.env.COGNITO_CLIENT_SECRET || "",
+          },
+          {
+            name: "COGNITO_DOMAIN_PREFIX",
+            value: process.env.COGNITO_DOMAIN_PREFIX || "",
+          },
+          {
+            name: "OAUTH_CLIENT_ID",
+            value: process.env.OAUTH_CLIENT_ID || "",
+          },
+          {
+            name: "OAUTH_CLIENT_SECRET",
+            value: process.env.OAUTH_CLIENT_SECRET || "",
+          },
+          {
+            name: "SNS_SHARE_NOTIFICATIONS_TOPIC_ARN",
+            value: snsTopic.arn,
+          },
+          {
+            name: "FILE_SYNC_EVENT_BUS_ARN",
+            value: fileSyncEventBus.arn,
+          },
+          {
+            name: "FILE_SYNC_QUEUE_ARN",
+            value: fileSyncQueue.arn,
+          },
+          {
+            name: "AWS_HUB_ACCOUNT_ID",
+            value: process.env.AWS_HUB_ACCOUNT_ID || "",
+          },
+          {
+            name: "ALLOWED_ORIGINS",
+            value: process.env.ALLOWED_ORIGINS || "",
+          },
+          {
+            name: "BOT_JWT_SECRET",
+            value: process.env.BOT_JWT_SECRET || "",
+          },
+          {
+            name: "COGNITO_DOMAIN",
+            value: process.env.COGNITO_DOMAIN || "",
+          },
+          {
+            name: "NEXT_PUBLIC_APP_URL",
+            value: process.env.NEXT_PUBLIC_APP_URL || "",
+          },
+        ],
+      },
+    },
+    networkConfiguration: {
+      subnets: vpc.privateSubnetIds,
+      securityGroups: [appSg.id],
+      assignPublicIp: false, // In private subnets with NAT gateway, public IP is not required
     },
   },
-  networkConfiguration: {
-    subnets: vpc.privateSubnetIds,
-    securityGroups: [appSg.id],
-    assignPublicIp: false, // In private subnets with NAT gateway, public IP is not required
-  },
-});
+  { dependsOn: [prismaMigrate] },
+);
 
 export const url = alb.loadBalancer.dnsName;
 export const dbEndpoint = db.endpoint;
@@ -345,49 +417,6 @@ export const appLogGroupName = appLogGroup.name;
 // ─── File Sync: SQS + Lambda + EventBridge ────────────────────────────────────
 
 // Dead-letter queue for failed file-sync messages
-const fileSyncDlq = new aws.sqs.Queue("file-sync-dlq", {
-  messageRetentionSeconds: 1209600, // 14 days
-  tags: { Purpose: "file-sync-dead-letter" },
-});
-
-// Main SQS queue — receives events from both same-account S3 and cross-account EventBridge
-const fileSyncQueue = new aws.sqs.Queue("file-sync-queue", {
-  visibilityTimeoutSeconds: 60, // Must be >= Lambda timeout
-  messageRetentionSeconds: 86400, // 1 day
-  redrivePolicy: fileSyncDlq.arn.apply((arn) =>
-    JSON.stringify({ deadLetterTargetArn: arn, maxReceiveCount: 3 }),
-  ),
-  tags: { Purpose: "file-sync" },
-});
-
-// Queue policy: allow S3 (same-account direct notifications) and EventBridge to send messages
-const fileSyncQueuePolicy = new aws.sqs.QueuePolicy("file-sync-queue-policy", {
-  queueUrl: fileSyncQueue.url,
-  policy: pulumi.all([fileSyncQueue.arn]).apply(([queueArn]) =>
-    JSON.stringify({
-      Version: "2012-10-17",
-      Statement: [
-        {
-          Sid: "AllowS3DirectNotifications",
-          Effect: "Allow",
-          Principal: { Service: "s3.amazonaws.com" },
-          Action: "sqs:SendMessage",
-          Resource: queueArn,
-          Condition: {
-            ArnLike: { "aws:SourceArn": "arn:aws:s3:::*" },
-          },
-        },
-        {
-          Sid: "AllowEventBridgeForwarding",
-          Effect: "Allow",
-          Principal: { Service: "events.amazonaws.com" },
-          Action: "sqs:SendMessage",
-          Resource: queueArn,
-        },
-      ],
-    }),
-  ),
-});
 
 // EventBridge bus resource policy: allow tenant accounts to PutEvents
 // Tenant account IDs should be managed dynamically; this allows any account in the org.

@@ -27,6 +27,16 @@ import {
     DialogTitle,
     DialogTrigger,
 } from "@/components/ui/dialog"
+import {
+    AlertDialog,
+    AlertDialogAction,
+    AlertDialogCancel,
+    AlertDialogContent,
+    AlertDialogDescription,
+    AlertDialogFooter,
+    AlertDialogHeader,
+    AlertDialogTitle,
+} from "@/components/ui/alert-dialog"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import {
@@ -58,6 +68,8 @@ export function AwsAccountSettings() {
     const [createOpen, setCreateOpen] = React.useState(false)
     const [editOpen, setEditOpen] = React.useState(false)
     const [editingAccount, setEditingAccount] = React.useState<AwsAccount | null>(null)
+    const [deleteOpen, setDeleteOpen] = React.useState(false)
+    const [accountToDelete, setAccountToDelete] = React.useState<AwsAccount | null>(null)
     const [syncing, setSyncing] = React.useState<string | null>(null)
 
     const fetchAccounts = React.useCallback(async () => {
@@ -185,11 +197,11 @@ export function AwsAccountSettings() {
         }
     }
 
-    const handleDelete = async (account: AwsAccount) => {
-        if (!confirm(`Are you sure you want to delete account "${account.name}"? This cannot be undone.`)) return
+    const confirmDelete = async () => {
+        if (!accountToDelete) return
 
         try {
-            const res = await fetchWithAuth(`/api/accounts/${account.id}`, {
+            const res = await fetchWithAuth(`/api/accounts/${accountToDelete.id}`, {
                 method: "DELETE",
             })
 
@@ -202,7 +214,15 @@ export function AwsAccountSettings() {
             }
         } catch {
             toast.error("Error deleting account")
+        } finally {
+            setDeleteOpen(false)
+            setAccountToDelete(null)
         }
+    }
+
+    const handleDeleteClick = (account: AwsAccount) => {
+        setAccountToDelete(account)
+        setDeleteOpen(true)
     }
 
     return (
@@ -357,7 +377,7 @@ export function AwsAccountSettings() {
                                                         <DropdownMenuSeparator />
                                                         <DropdownMenuItem
                                                             className="text-red-600 focus:text-red-600"
-                                                            onClick={() => handleDelete(account)}
+                                                            onClick={() => handleDeleteClick(account)}
                                                         >
                                                             <Trash2 className="mr-2 h-4 w-4" />
                                                             Delete
@@ -373,6 +393,23 @@ export function AwsAccountSettings() {
                     )}
                 </CardContent>
             </Card>
+
+            <AlertDialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+                <AlertDialogContent>
+                    <AlertDialogHeader>
+                        <AlertDialogTitle>Are you absolutely sure?</AlertDialogTitle>
+                        <AlertDialogDescription>
+                            Are you sure you want to delete account "{accountToDelete?.name}"? This cannot be undone.
+                        </AlertDialogDescription>
+                    </AlertDialogHeader>
+                    <AlertDialogFooter>
+                        <AlertDialogCancel>Cancel</AlertDialogCancel>
+                        <AlertDialogAction onClick={confirmDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                            Delete
+                        </AlertDialogAction>
+                    </AlertDialogFooter>
+                </AlertDialogContent>
+            </AlertDialog>
         </div>
     )
 }

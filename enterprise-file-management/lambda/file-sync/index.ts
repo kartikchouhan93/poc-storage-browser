@@ -1,6 +1,10 @@
 import { S3Client, HeadObjectCommand } from "@aws-sdk/client-s3";
 import { STSClient, AssumeRoleCommand } from "@aws-sdk/client-sts";
-import type { SQSEvent, SQSBatchResponse, SQSBatchItemFailure } from "aws-lambda";
+import type {
+  SQSEvent,
+  SQSBatchResponse,
+  SQSBatchItemFailure,
+} from "aws-lambda";
 import { getPrismaClient } from "./prisma";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -35,13 +39,16 @@ function parseS3Event(body: string): ParsedS3Event[] {
 
     const bucketName: string = detail.bucket?.name ?? "";
     const key: string = decodeURIComponent(
-      (detail.object?.key ?? "").replace(/\+/g, " ")
+      (detail.object?.key ?? "").replace(/\+/g, " "),
     );
     const size: number = detail.object?.size ?? 0;
     const eTag: string | undefined = detail.object?.etag;
 
     let type: ParsedS3Event["type"] = "unknown";
-    if (detailType === "Object Created" || detailType === "Object Restore Completed") {
+    if (
+      detailType === "Object Created" ||
+      detailType === "Object Restore Completed"
+    ) {
       type = "created";
     } else if (detailType === "Object Deleted") {
       type = "deleted";
@@ -55,7 +62,7 @@ function parseS3Event(body: string): ParsedS3Event[] {
     return parsed.Records.map((record: any) => {
       const bucketName: string = record.s3?.bucket?.name ?? "";
       const key: string = decodeURIComponent(
-        (record.s3?.object?.key ?? "").replace(/\+/g, " ")
+        (record.s3?.object?.key ?? "").replace(/\+/g, " "),
       );
       const size: number = record.s3?.object?.size ?? 0;
       const eTag: string | undefined = record.s3?.object?.eTag;
@@ -77,7 +84,7 @@ function parseS3Event(body: string): ParsedS3Event[] {
 
 async function resolveBucket(
   bucketName: string,
-  cache: Map<string, BucketInfo>
+  cache: Map<string, BucketInfo>,
 ): Promise<BucketInfo | null> {
   if (cache.has(bucketName)) return cache.get(bucketName)!;
 
@@ -104,7 +111,10 @@ async function resolveBucket(
     tenantId: bucket.tenantId,
     region: bucket.region,
     awsAccount: bucket.awsAccount
-      ? { roleArn: bucket.awsAccount.roleArn, externalId: bucket.awsAccount.externalId }
+      ? {
+          roleArn: bucket.awsAccount.roleArn,
+          externalId: bucket.awsAccount.externalId,
+        }
       : null,
   };
   cache.set(bucketName, info);
@@ -152,7 +162,7 @@ async function getS3ForBucket(bucketInfo: BucketInfo): Promise<S3Client> {
       RoleArn: roleArn,
       RoleSessionName: "CamsLambdaHeadObject",
       ExternalId: decryptedExternalId,
-    })
+    }),
   );
 
   if (!Credentials) throw new Error(`Failed to assume role ${roleArn}`);
@@ -174,10 +184,12 @@ const SYSTEM_ACTOR = "system:lambda";
 async function fetchUploaderIdentity(
   s3: S3Client,
   bucketName: string,
-  key: string
+  key: string,
 ): Promise<{ userId: string | null; uploaderType: string } | null> {
   try {
-    const head = await s3.send(new HeadObjectCommand({ Bucket: bucketName, Key: key }));
+    const head = await s3.send(
+      new HeadObjectCommand({ Bucket: bucketName, Key: key }),
+    );
     const meta = head.Metadata ?? {};
     return {
       userId: meta["uploaded-by-user-id"] ?? null,
@@ -195,7 +207,7 @@ async function writeAudit(
   resourceId: string | undefined,
   details: Record<string, unknown>,
   status: "SUCCESS" | "FAILED",
-  userId: string | null = null
+  userId: string | null = null,
 ): Promise<void> {
   const prisma = getPrismaClient();
   try {
@@ -209,6 +221,7 @@ async function writeAudit(
         ipAddress: null,
         createdBy: null,
         updatedBy: null,
+        updatedAt: new Date(),
       },
     });
   } catch (err) {
@@ -220,7 +233,7 @@ async function writeAudit(
 
 async function upsertFileObject(
   bucketInfo: BucketInfo,
-  event: ParsedS3Event
+  event: ParsedS3Event,
 ): Promise<void> {
   const prisma = getPrismaClient();
   const { bucketId, tenantId } = bucketInfo;
@@ -232,7 +245,9 @@ async function upsertFileObject(
   // Use cross-account S3 client for BYOA buckets
   const s3 = await getS3ForBucket(bucketInfo);
   // Folders are virtual (0-byte prefix keys) — HeadObject will 404, skip it
-  const identity = isFolder ? null : await fetchUploaderIdentity(s3, bucketName, key);
+  const identity = isFolder
+    ? null
+    : await fetchUploaderIdentity(s3, bucketName, key);
   const userId = identity?.userId ?? null;
   const uploaderType = identity?.uploaderType ?? "unknown";
 
@@ -246,7 +261,14 @@ async function upsertFileObject(
       data: { size: BigInt(size), updatedAt: new Date() },
     });
     console.log(`Updated FileObject: ${key} in bucket ${bucketId}`);
-    await writeAudit("FILE_UPLOAD", "FileObject", existing.id, { bucketId, key, size, source: "s3-event", op: "updated", uploaderType }, "SUCCESS", userId);
+    await writeAudit(
+      "FILE_UPLOAD",
+      "FileObject",
+      existing.id,
+      { bucketId, key, size, source: "s3-event", op: "updated", uploaderType },
+      "SUCCESS",
+      userId,
+    );
   } else {
     const parentKey = key.split("/").slice(0, -1).join("/");
     let parentId: string | null = null;
@@ -260,17 +282,33 @@ async function upsertFileObject(
     }
 
     const created = await prisma.fileObject.create({
-      data: { name, key, isFolder, size: BigInt(size), bucketId, tenantId, parentId },
+      data: {
+        name,
+        key,
+        isFolder,
+        size: BigInt(size),
+        bucketId,
+        tenantId,
+        parentId,
+        createdBy: userId,
+      },
     });
     console.log(`Created FileObject: ${key} in bucket ${bucketId}`);
     const action = isFolder ? "FOLDER_CREATE" : "FILE_UPLOAD";
-    await writeAudit(action, "FileObject", created.id, { bucketId, key, size, source: "s3-event", op: "created", uploaderType }, "SUCCESS", userId);
+    await writeAudit(
+      action,
+      "FileObject",
+      created.id,
+      { bucketId, key, size, source: "s3-event", op: "created", uploaderType },
+      "SUCCESS",
+      userId,
+    );
   }
 }
 
 async function deleteFileObject(
   bucketInfo: BucketInfo,
-  event: ParsedS3Event
+  event: ParsedS3Event,
 ): Promise<void> {
   const prisma = getPrismaClient();
   const { bucketId } = bucketInfo;
@@ -283,8 +321,11 @@ async function deleteFileObject(
     const deleted = await prisma.fileObject.deleteMany({
       where: { bucketId, key: { startsWith: key } },
     });
-    console.log(`Deleted folder and ${deleted.count} child objects for key: ${key} in bucket ${bucketId}`);
-    await writeAudit("FOLDER_DELETE", "FileObject", undefined, { bucketId, key, deletedCount: deleted.count, source: "s3-event" }, "SUCCESS", null);
+    console.log(
+      `Deleted folder and ${deleted.count} child objects for key: ${key} in bucket ${bucketId}`,
+    );
+    // Audit for deletions is written by the API route (which has the userId).
+    // Lambda only syncs the DB — no duplicate audit here.
     return;
   }
 
@@ -297,7 +338,7 @@ async function deleteFileObject(
 
   await prisma.fileObject.delete({ where: { id: file.id } });
   console.log(`Deleted FileObject: ${key} in bucket ${bucketId}`);
-  await writeAudit("FILE_DELETE", "FileObject", file.id, { bucketId, key, source: "s3-event" }, "SUCCESS", null);
+  // Audit already written by the API route with the correct userId.
 }
 
 // ─── Lambda Handler ───────────────────────────────────────────────────────────
@@ -318,7 +359,9 @@ export async function handler(event: SQSEvent): Promise<SQSBatchResponse> {
 
         const bucketInfo = await resolveBucket(s3Event.bucketName, bucketCache);
         if (!bucketInfo) {
-          console.warn(`Skipping event — bucket not registered: ${s3Event.bucketName}`);
+          console.warn(
+            `Skipping event — bucket not registered: ${s3Event.bucketName}`,
+          );
           continue;
         }
 

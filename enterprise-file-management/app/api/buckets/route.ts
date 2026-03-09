@@ -441,6 +441,39 @@ export async function POST(request: NextRequest) {
               err,
             );
           }
+
+          // ── Same-account S3 → SQS notification (no BYOA) ──────────────
+          // BYOA buckets use EventBridge cross-account (handled below).
+          // Same-account buckets need a direct S3 → SQS notification config.
+          if (!awsAccount) {
+            const fileSyncQueueArn = process.env.FILE_SYNC_QUEUE_ARN;
+            if (!fileSyncQueueArn) {
+              console.warn("FILE_SYNC_QUEUE_ARN not set — skipping S3 notification setup for same-account bucket");
+            } else {
+              try {
+                const { PutBucketNotificationConfigurationCommand } = await import("@aws-sdk/client-s3");
+                await s3.send(
+                  new PutBucketNotificationConfigurationCommand({
+                    Bucket: finalBucketName,
+                    NotificationConfiguration: {
+                      QueueConfigurations: [
+                        {
+                          QueueArn: fileSyncQueueArn,
+                          Events: [
+                            "s3:ObjectCreated:*",
+                            "s3:ObjectRemoved:*",
+                          ],
+                        },
+                      ],
+                    },
+                  }),
+                );
+                console.log(`S3 → SQS notification configured for same-account bucket: ${finalBucketName}`);
+              } catch (err) {
+                console.warn("Could not configure S3 notification for same-account bucket:", err);
+              }
+            }
+          }
         } catch (configError) {
           console.error(
             "Failed to configure bucket, rolling back S3 creation:",

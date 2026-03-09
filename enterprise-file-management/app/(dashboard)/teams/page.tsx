@@ -7,6 +7,7 @@ import { GenericModal } from "@/components/ui/generic-modal";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Users, Plus, Trash2, RefreshCw } from "lucide-react";
+import { useToast } from "@/components/ui/use-toast";
 
 import { useAuth } from "@/components/providers/AuthProvider";
 import {
@@ -24,6 +25,7 @@ import {
 export default function TeamsPage() {
   const { user } = useAuth();
   const router = useRouter();
+  const { toast } = useToast();
 
   React.useEffect(() => {
     if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
@@ -94,10 +96,18 @@ export default function TeamsPage() {
         setTeams(teams.filter(t => t.id !== teamId));
       } else {
         const err = await res.json();
-        alert(err.error || "Failed to delete team");
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: err.error || "Failed to delete team"
+        });
       }
     } catch (e) {
-      alert("Unexpected error deleting team");
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "Unexpected error deleting team"
+      });
     }
   };
 

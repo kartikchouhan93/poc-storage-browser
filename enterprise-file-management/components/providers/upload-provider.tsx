@@ -10,17 +10,25 @@ export interface UploadFile {
     name: string
     size: number
     progress: number
-    status: "pending" | "uploading" | "complete" | "error"
+    status: "pending" | "uploading" | "paused" | "complete" | "error" | "cancelled"
     file: File
     bucketId: string
     parentId: string | null
+    uploadId?: string
+    key?: string
 }
 
 interface UploadContextType {
     files: UploadFile[]
     addFiles: (files: File[], bucketId: string, parentId: string | null) => void
     removeFile: (id: string) => void
+    pauseFile: (id: string) => void
+    resumeFile: (id: string) => void
+    retryFile: (id: string) => void
+    cancelFile: (id: string) => void
     isUploading: boolean
+    isIndicatorOpen: boolean
+    setIsIndicatorOpen: (isOpen: boolean) => void
 }
 
 const UploadContext = React.createContext<UploadContextType | undefined>(undefined)
@@ -36,6 +44,10 @@ export function useUpload() {
 export function UploadProvider({ children }: { children: React.ReactNode }) {
     const [files, setFiles] = React.useState<UploadFile[]>([])
     const [isProcessing, setIsProcessing] = React.useState(false)
+    const [isIndicatorOpen, setIsIndicatorOpen] = React.useState(false)
+    const pausedRef = React.useRef<Set<string>>(new Set())
+    const cancelledRef = React.useRef<Set<string>>(new Set())
+    const abortControllersRef = React.useRef<Record<string, AbortController[]>>({})
 
     // Constants
     const PART_SIZE = 20 * 1024 * 1024; // 20MB
@@ -55,10 +67,75 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         }))
 
         setFiles((prev) => [...prev, ...uploadFiles])
+        setIsIndicatorOpen(true)
     }
 
     const removeFile = (id: string) => {
         setFiles((prev) => prev.filter((f) => f.id !== id))
+    }
+
+    const pauseFile = (id: string) => {
+        pausedRef.current.add(id)
+        setFiles(prev => prev.map(f => f.id === id && (f.status === 'uploading' || f.status === 'pending') ? { ...f, status: 'paused' } : f))
+        
+        if (abortControllersRef.current[id]) {
+            abortControllersRef.current[id].forEach(c => c.abort())
+            abortControllersRef.current[id] = []
+        }
+    }
+
+    const resumeFile = (id: string) => {
+        pausedRef.current.delete(id)
+        setFiles(prev => prev.map(f => f.id === id && f.status === 'paused' ? { ...f, status: 'pending' } : f))
+    }
+
+    const retryFile = (id: string) => {
+        setFiles(prev => prev.map(f => {
+            if (f.id === id && f.status === 'error') {
+                // If it's a multipart upload that failed, we could keep the progress or reset.
+                // Resetting to pending will naturally invoke `uploadMultipart` which fetches status and resumes.
+                return { ...f, status: 'pending' }
+            }
+            return f
+        }))
+    }
+
+    const cancelFile = async (id: string) => {
+        cancelledRef.current.add(id)
+        
+        if (abortControllersRef.current[id]) {
+            abortControllersRef.current[id].forEach(c => c.abort())
+            abortControllersRef.current[id] = []
+        }
+        
+        const fileToCancel = files.find(f => f.id === id)
+
+        if (fileToCancel) {
+            // Optimistically remove from UI
+            setFiles(prev => prev.map(f => f.id === id ? { ...f, status: 'cancelled' } : f))
+            
+            if (fileToCancel.uploadId && fileToCancel.key) {
+                try {
+                    await fetchWithAuth('/api/files/multipart/abort', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({
+                            bucketId: fileToCancel.bucketId,
+                            key: fileToCancel.key,
+                            uploadId: fileToCancel.uploadId
+                        })
+                    })
+                } catch (error) {
+                    console.error("Failed to abort multipart upload on cancellation:", error)
+                }
+            }
+        }
+        
+        // Remove file entirely after a short delay so the user sees the 'cancelled' state briefly, or remove immediately
+        setTimeout(() => {
+            removeFile(id)
+            cancelledRef.current.delete(id)
+        }, 1000)
     }
 
     // Effect to process the queue
@@ -84,10 +161,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 await uploadSimple(fileItem)
             }
 
+            // If we paused or cancelled during the upload, do not mark as complete.
+            if (pausedRef.current.has(fileItem.id) || cancelledRef.current.has(fileItem.id)) {
+                return;
+            }
+
             setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'complete', progress: 100 } : f))
             toast.success(`Uploaded ${fileItem.name}`, { duration: 2000 })
 
         } catch (error) {
+            // Do not show error toasters if the user intentionally cancelled or paused but an error threw
+            if (pausedRef.current.has(fileItem.id) || cancelledRef.current.has(fileItem.id)) {
+                return;
+            }
             console.error(error)
             setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error', progress: 0 } : f))
             toast.error(`Failed to upload ${fileItem.name}`, { duration: 2000 })
@@ -120,13 +206,40 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     }
 
     const uploadMultipart = async (fileItem: UploadFile) => {
-        // Dynamic Chunk Sizing
-        let currentPartSize = PART_SIZE;
+        // 1. Client Internet Speed Logic to optimize chunk size
+        let uploadSpeedMbps = 5; // Default fallback: 10 Mbps
+        if (typeof navigator !== "undefined" && (navigator as any).connection) {
+            const conn = (navigator as any).connection;
+        console.log(`[Multipart Upload] Starting upload speed ${conn.downlink}-${Math.max(1, conn.downlink / 3)}`);
+
+            if (conn.downlink) {
+                // downlink is in Mbps. Assume upload is roughly 1/3 of download on typical asymmetrical links.
+                // Clamp it to a minimum of 1 Mbps to avoid making chunks too tiny on spotty networks.
+                uploadSpeedMbps = Math.max(1, conn.downlink / 3);
+            }
+        }
+
+        // Calculate chunk size to ensure each chunk uploads comfortably within ~120 seconds.
+        // We divide the bandwidth by CONCURRENCY because parts are uploaded in parallel.
+        // This keeps chunks smaller on slow networks, reducing the penalty of a network drop.
+        const bytesPerSecond = (uploadSpeedMbps * 1024 * 1024) / 8;
+        const targetChunkSize = Math.floor((bytesPerSecond / CONCURRENCY) * 120); 
+
+        // Clamp between S3 minimum (5MB) and a reasonable max (100MB)
+        let currentPartSize = Math.max(5 * 1024 * 1024, Math.min(targetChunkSize, 100 * 1024 * 1024));
+        
+        // Ensure we don't exceed the 10,000 S3 part limit
         if (fileItem.size / currentPartSize > 9900) {
             currentPartSize = Math.ceil(fileItem.size / 9900);
         }
         
         const totalParts = Math.ceil(fileItem.size / currentPartSize);
+
+        console.log(`[Multipart Upload] Starting upload for ${fileItem.name}`);
+        console.log(`[Multipart Upload] Estimated Client Upload Speed: ${uploadSpeedMbps.toFixed(2)} Mbps`);
+        console.log(`[Multipart Upload] Total File Size: ${(fileItem.size / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`[Multipart Upload] Dynamic Chunk Size: ${(currentPartSize / 1024 / 1024).toFixed(2)} MB`);
+        console.log(`[Multipart Upload] Total Chunks: ${totalParts}`);
 
         // Generate deterministic file signature
         const fileHash = btoa(encodeURIComponent(`${fileItem.bucketId}-${fileItem.parentId || 'root'}-${fileItem.name}-${fileItem.size}-${fileItem.file.lastModified}`));
@@ -171,6 +284,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             key = initData.key;
         }
 
+        // Save uploadId and key immediately to state so it can be aborted if needed
+        setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, uploadId, key } : f));
+
         let completedPartsCount = parts.length;
         
         if (completedPartsCount > 0) {
@@ -197,9 +313,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     if (!signRes.ok) throw new Error(`Failed to sign part ${partNumber}`);
                     const { url } = await signRes.json();
 
+                    const controller = new AbortController()
+                    if (!abortControllersRef.current[fileItem.id]) {
+                        abortControllersRef.current[fileItem.id] = []
+                    }
+                    abortControllersRef.current[fileItem.id].push(controller)
+
                     const uploadRes = await fetch(url, {
                         method: 'PUT',
-                        body: chunk
+                        body: chunk,
+                        signal: controller.signal
                     });
 
                     if (!uploadRes.ok) throw new Error(`Failed to upload part ${partNumber}`);
@@ -221,7 +344,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     
                     return; // Success, exit retry loop
                     
-                } catch (error) {
+                } catch (error: any) {
+                    if (error.name === 'AbortError') {
+                        throw error; // Bubble up instantly, no retry
+                    }
                     attempts++;
                     console.warn(`Chunk ${partNumber} failed. Attempt ${attempts} of ${maxAttempts}. Error:`, error);
                     if (attempts >= maxAttempts) throw error;
@@ -233,8 +359,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         const allPartNumbers = Array.from({ length: totalParts }, (_, i) => i + 1);
         const remainingPartNumbers = allPartNumbers.filter(num => !parts.some(p => p.PartNumber === num));
 
-        // Upload remaining parts in concurrent batches
+        // Upload remaining parts in concurrent batches — stop if paused
         for (let i = 0; i < remainingPartNumbers.length; i += CONCURRENCY) {
+            if (cancelledRef.current.has(fileItem.id)) {
+                return
+            }
+            if (pausedRef.current.has(fileItem.id)) {
+                setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'paused' } : f))
+                return
+            }
             const batch = remainingPartNumbers.slice(i, i + CONCURRENCY);
             await Promise.all(batch.map(partNum => uploadPart(partNum)));
         }
@@ -264,7 +397,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     const isUploading = files.some(f => f.status === 'uploading' || f.status === 'pending')
 
     return (
-        <UploadContext.Provider value={{ files, addFiles, removeFile, isUploading }}>
+        <UploadContext.Provider value={{ 
+            files, addFiles, removeFile, pauseFile, resumeFile, retryFile, cancelFile, 
+            isUploading, isIndicatorOpen, setIsIndicatorOpen 
+        }}>
             {children}
         </UploadContext.Provider>
     )

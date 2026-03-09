@@ -11,6 +11,18 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Shield, Users, Trash2 } from 'lucide-react';
 import { GenericModal } from '@/components/ui/generic-modal';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useToast } from '@/components/ui/use-toast';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog";
 
 import { useAuth } from '@/components/providers/AuthProvider';
 
@@ -18,6 +30,7 @@ export default function TeamDetailPage() {
   const { user } = useAuth();
   const params = useParams();
   const router = useRouter();
+  const { toast } = useToast();
 
   React.useEffect(() => {
     if (user && user.role !== "PLATFORM_ADMIN" && user.role !== "TENANT_ADMIN") {
@@ -107,7 +120,11 @@ export default function TeamDetailPage() {
         setSelectedUserId('');
       } else {
         const err = await res.json();
-        alert(err.error || 'Failed to add member');
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: err.error || 'Failed to add member'
+        });
       }
     } catch (e) {
       console.error(e);
@@ -117,7 +134,6 @@ export default function TeamDetailPage() {
   };
 
   const handleRemoveMember = async (userId: string) => {
-    if(!confirm('Are you sure you want to remove this user from the team?')) return;
     try {
       const res = await fetch(`/api/tenant/teams/${teamId}/members/${userId}`, { method: 'DELETE' });
       if (res.ok) {
@@ -148,10 +164,17 @@ export default function TeamDetailPage() {
          });
          
          if(res.ok) {
-             alert('Permissions saved successfully.');
+             toast({
+                 title: "Success",
+                 description: "Permissions saved successfully."
+             });
          } else {
              const err = await res.json();
-             alert(err.error || 'Failed to save permissions');
+             toast({
+                 variant: "destructive",
+                 title: "Error",
+                 description: err.error || 'Failed to save permissions'
+             });
          }
      } catch (e) {
          console.error(e);
@@ -170,10 +193,17 @@ export default function TeamDetailPage() {
          });
          
          if(res.ok) {
-             alert('Team settings saved successfully.');
+             toast({
+                 title: "Success",
+                 description: "Team settings saved successfully."
+             });
          } else {
              const err = await res.json();
-             alert(err.error || 'Failed to save settings');
+             toast({
+                 variant: "destructive",
+                 title: "Error",
+                 description: err.error || 'Failed to save settings'
+             });
          }
      } catch (e) {
          console.error(e);
@@ -215,9 +245,25 @@ export default function TeamDetailPage() {
        accessorKey: 'actions',
        id: 'actions',
        cell: (row: any) => (
-           <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 block" onClick={() => handleRemoveMember(row.userId)}>
-              <Trash2 className="h-4 w-4" />
-           </Button>
+           <AlertDialog>
+             <AlertDialogTrigger asChild>
+               <Button variant="ghost" size="icon" className="text-red-500 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-950/50 block">
+                  <Trash2 className="h-4 w-4" />
+               </Button>
+             </AlertDialogTrigger>
+             <AlertDialogContent>
+               <AlertDialogHeader>
+                 <AlertDialogTitle>Remove Team Member</AlertDialogTitle>
+                 <AlertDialogDescription>
+                   Are you sure you want to remove this user from the team? They will lose all permissions granted by this team.
+                 </AlertDialogDescription>
+               </AlertDialogHeader>
+               <AlertDialogFooter>
+                 <AlertDialogCancel>Cancel</AlertDialogCancel>
+                 <AlertDialogAction onClick={() => handleRemoveMember(row.userId)}>Remove</AlertDialogAction>
+               </AlertDialogFooter>
+             </AlertDialogContent>
+           </AlertDialog>
        )
     }
   ];

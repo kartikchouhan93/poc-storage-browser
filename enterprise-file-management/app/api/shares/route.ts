@@ -101,7 +101,7 @@ export async function POST(request: NextRequest) {
       shareUrl,
       expiryDate: share.expiry,
       downloadLimit: share.downloadLimit,
-      hasPassword: share.passwordProtected,
+      password: password,
     });
 
     // Audit logging

@@ -20,10 +20,40 @@ export async function POST(
   });
 
   if (!bucket) return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
-  if (!bucket.awsAccount)
-    return NextResponse.json({ error: "No AWS account linked to this bucket" }, { status: 400 });
 
   const ourEventBusArn = process.env.FILE_SYNC_EVENT_BUS_ARN;
+
+  // ── Same-account bucket: configure S3 → SQS direct notification ──────────
+  if (!bucket.awsAccount) {
+    const fileSyncQueueArn = process.env.FILE_SYNC_QUEUE_ARN;
+    if (!fileSyncQueueArn)
+      return NextResponse.json({ error: "FILE_SYNC_QUEUE_ARN not configured" }, { status: 500 });
+
+    try {
+      const { getS3Client } = await import("@/lib/s3");
+      const { PutBucketNotificationConfigurationCommand } = await import("@aws-sdk/client-s3");
+      const s3 = await getS3Client(null, bucket.region, null);
+      await s3.send(
+        new PutBucketNotificationConfigurationCommand({
+          Bucket: bucket.name,
+          NotificationConfiguration: {
+            QueueConfigurations: [
+              {
+                QueueArn: fileSyncQueueArn,
+                Events: ["s3:ObjectCreated:*", "s3:ObjectRemoved:*"],
+              },
+            ],
+          },
+        }),
+      );
+      return NextResponse.json({ success: true, type: "s3-sqs-direct" });
+    } catch (err: any) {
+      console.error("S3 notification setup failed:", err);
+      return NextResponse.json({ error: err?.message || "S3 notification setup failed" }, { status: 502 });
+    }
+  }
+
+  // ── BYOA bucket: configure EventBridge cross-account ─────────────────────
   if (!ourEventBusArn)
     return NextResponse.json({ error: "FILE_SYNC_EVENT_BUS_ARN not configured" }, { status: 500 });
 

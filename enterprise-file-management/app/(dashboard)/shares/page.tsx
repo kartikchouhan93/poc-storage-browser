@@ -23,6 +23,18 @@ import {
   PaginationNext,
   PaginationPrevious,
 } from "@/components/ui/pagination"
+import { useToast } from "@/components/ui/use-toast"
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from "@/components/ui/alert-dialog"
 
 function SharesPageContent() {
   const [searchQuery, setSearchQuery] = React.useState("")
@@ -41,6 +53,7 @@ function SharesPageContent() {
   const [removePassword, setRemovePassword] = React.useState(false)
   const [editSaving, setEditSaving] = React.useState(false)
   const [refreshing, setRefreshing] = React.useState(false)
+  const { toast } = useToast()
 
   React.useEffect(() => {
     fetchShares(page)
@@ -120,29 +133,52 @@ function SharesPageContent() {
         } : s))
         setEditOpen(false)
         setEditingShare(null)
+        toast({
+          title: "Success",
+          description: "Share settings updated successfully."
+        })
       } else {
-        alert("Failed to update share settings")
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to update share settings"
+        })
       }
     } catch (err) {
       console.error(err)
-      alert("An error occurred while updating")
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "An error occurred while updating"
+      })
     } finally {
       setEditSaving(false)
     }
   }
 
   const handleDelete = async (id: string) => {
-    if (confirm("Are you sure you want to revoke this share?")) {
-      try {
-        const res = await fetch(`/api/shares/${id}`, { method: "DELETE" })
-        if (res.ok) {
-          setShares(prev => prev.map(s => s.id === id ? { ...s, status: "REVOKED" } : s))
-        } else {
-          alert("Failed to revoke share");
-        }
-      } catch (err) {
-        console.error("Error revoking share", err);
+    try {
+      const res = await fetch(`/api/shares/${id}`, { method: "DELETE" })
+      if (res.ok) {
+        setShares(prev => prev.map(s => s.id === id ? { ...s, status: "REVOKED" } : s))
+        toast({
+          title: "Share Revoked",
+          description: "The share was successfully revoked."
+        })
+      } else {
+        toast({
+          variant: "destructive",
+          title: "Error",
+          description: "Failed to revoke share"
+        })
       }
+    } catch (err) {
+      console.error("Error revoking share", err);
+      toast({
+        variant: "destructive",
+        title: "Error",
+        description: "An expected error occurred while revoking the share"
+      })
     }
   }
 
@@ -178,9 +214,25 @@ function SharesPageContent() {
           <Button variant="ghost" size="icon" onClick={() => handleEditClick(row)} title="Edit Share">
             <Edit className="h-4 w-4 text-slate-500 hover:text-slate-900 dark:hover:text-slate-100" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => handleDelete(row.id)} title="Revoke Share">
-            <Trash2 className="h-4 w-4 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50" />
-          </Button>
+          <AlertDialog>
+            <AlertDialogTrigger asChild>
+              <Button variant="ghost" size="icon" title="Revoke Share">
+                <Trash2 className="h-4 w-4 text-red-500 hover:bg-red-50 dark:hover:bg-red-950/50" />
+              </Button>
+            </AlertDialogTrigger>
+            <AlertDialogContent>
+              <AlertDialogHeader>
+                <AlertDialogTitle>Revoke Share</AlertDialogTitle>
+                <AlertDialogDescription>
+                  Are you sure you want to revoke this share? This will immediately prevent anyone with the link from accessing the shared files.
+                </AlertDialogDescription>
+              </AlertDialogHeader>
+              <AlertDialogFooter>
+                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                <AlertDialogAction onClick={() => handleDelete(row.id)}>Revoke</AlertDialogAction>
+              </AlertDialogFooter>
+            </AlertDialogContent>
+          </AlertDialog>
         </div>
       )
     }

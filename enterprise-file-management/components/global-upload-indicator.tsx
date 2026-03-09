@@ -1,8 +1,7 @@
-
 "use client"
 
 import * as React from "react"
-import { Loader2, Minimize2, Maximize2, X, File, CheckCircle, AlertCircle } from "lucide-react"
+import { Loader2, Minimize2, Maximize2, X, File, CheckCircle, AlertCircle, Pause, Play, RefreshCw } from "lucide-react"
 import { Button } from "@/components/ui/button"
 import { Progress } from "@/components/ui/progress"
 import { useUpload } from "@/components/providers/upload-provider"
@@ -11,28 +10,17 @@ import { cn } from "@/lib/utils"
 
 export function GlobalUploadIndicator() {
     const { user } = useAuth()
-    const { files, isUploading } = useUpload() // [MODIFIED] Get isUploading from context
+    const { files, isUploading, pauseFile, resumeFile, retryFile, cancelFile, isIndicatorOpen, setIsIndicatorOpen } = useUpload()
     const [isMinimized, setIsMinimized] = React.useState(false)
-    const [isOpen, setIsOpen] = React.useState(true)
 
-    // [NEW] Auto-open when a new upload starts
     React.useEffect(() => {
-        if (isUploading) {
-            setIsOpen(true);
-        }
-    }, [isUploading]);
+        if (isUploading) setIsIndicatorOpen(true)
+    }, [isUploading, setIsIndicatorOpen])
 
-    // Filter for active or recently completed files to show
-    const activeFiles = files.filter(f => f.status === 'uploading' || f.status === 'pending')
+    const activeFiles = files.filter(f => f.status === 'uploading' || f.status === 'pending' || f.status === 'paused')
     const completedFiles = files.filter(f => f.status === 'complete' || f.status === 'error')
 
-    // Create a combined list, but maybe prioritize keeping the "session" alive?
-    // implementation detail: files list grows forever in provider?
-    // Provider should probably clean up completed files after some time or manual dismissal.
-    // For now, let's show all files that exist in the context context.
-
-    if (!user || files.length === 0 || !isOpen) return null
-
+    if (!user || files.length === 0 || !isIndicatorOpen) return null
 
     const progressSum = files.reduce((acc, f) => acc + f.progress, 0)
     const totalProgress = files.length > 0 ? Math.round(progressSum / files.length) : 0
@@ -53,18 +41,18 @@ export function GlobalUploadIndicator() {
                     <span className="text-sm font-medium">
                         {isUploading
                             ? `Uploading ${activeFiles.length} file${activeFiles.length !== 1 ? 's' : ''}`
-                            : "Uploads complete"}
+                            : activeFiles.some(f => f.status === 'paused')
+                                ? `${activeFiles.filter(f => f.status === 'paused').length} paused`
+                                : "Uploads complete"}
                     </span>
                 </div>
                 <div className="flex items-center gap-1">
                     <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsMinimized(!isMinimized)}>
                         {isMinimized ? <Maximize2 className="h-3 w-3" /> : <Minimize2 className="h-3 w-3" />}
                     </Button>
-                    {!isUploading && (
-                        <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsOpen(false)}>
-                            <X className="h-3 w-3" />
-                        </Button>
-                    )}
+                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setIsIndicatorOpen(false)}>
+                        <X className="h-3 w-3" />
+                    </Button>
                 </div>
             </div>
 
@@ -77,15 +65,60 @@ export function GlobalUploadIndicator() {
                             <div className="flex-1 min-w-0">
                                 <div className="flex items-center justify-between mb-1">
                                     <span className="text-sm truncate font-medium">{file.name}</span>
-                                    <span className="text-xs text-muted-foreground">{file.progress}%</span>
+                                    <span className="text-xs text-muted-foreground ml-1 shrink-0">{file.progress}%</span>
                                 </div>
                                 <Progress value={file.progress} className={cn("h-1",
                                     file.status === 'error' && "bg-destructive/20 [&>div]:bg-destructive",
-                                    file.status === 'complete' && "bg-green-500/20 [&>div]:bg-green-500"
+                                    file.status === 'complete' && "bg-green-500/20 [&>div]:bg-green-500",
+                                    file.status === 'paused' && "bg-yellow-500/20 [&>div]:bg-yellow-500"
                                 )} />
                             </div>
-                            {file.status === 'error' && <AlertCircle className="h-4 w-4 text-destructive shrink-0" />}
+                            {/* Status icons / retry controls */}
+                            {file.status === 'error' && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                    <AlertCircle className="h-4 w-4 text-destructive" />
+                                    <Button
+                                        variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                        onClick={() => retryFile(file.id)}
+                                        title="Retry upload"
+                                    >
+                                        <RefreshCw className="h-3 w-3" />
+                                    </Button>
+                                </div>
+                            )}
+                            
+                            {/* Complete icon */}
                             {file.status === 'complete' && <CheckCircle className="h-4 w-4 text-green-500 shrink-0" />}
+                            
+                            {/* Pause / Resume / Cancel controls */}
+                            {(file.status === 'uploading' || file.status === 'pending' || file.status === 'paused') && (
+                                <div className="flex items-center gap-1 shrink-0">
+                                    {file.status !== 'paused' ? (
+                                        <Button
+                                            variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                            onClick={() => pauseFile(file.id)}
+                                            title="Pause upload"
+                                        >
+                                            <Pause className="h-3 w-3" />
+                                        </Button>
+                                    ) : (
+                                        <Button
+                                            variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-foreground"
+                                            onClick={() => resumeFile(file.id)}
+                                            title="Resume upload"
+                                        >
+                                            <Play className="h-3 w-3" />
+                                        </Button>
+                                    )}
+                                    <Button
+                                        variant="ghost" size="icon" className="h-6 w-6 text-muted-foreground hover:text-destructive"
+                                        onClick={() => cancelFile(file.id)}
+                                        title="Cancel upload"
+                                    >
+                                        <X className="h-3 w-3" />
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     ))}
                 </div>
