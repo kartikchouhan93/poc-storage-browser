@@ -65,6 +65,10 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
     return await backend.download.downloadFromUrl(url, targetPath);
   });
 
+  ipcMain.handle("download-s3-file", async (event, { bucketId, s3Key, localPath, totalSize }) => {
+    return await backend.download.downloadWithBucketId(bucketId, s3Key, localPath, totalSize || 0);
+  });
+
   // 3. Status
   ipcMain.handle("get-active-transfers", () => {
     return backend.status.getTransfers();
