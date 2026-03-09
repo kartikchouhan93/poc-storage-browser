@@ -10,7 +10,8 @@ const crypto = require('crypto');
 const axios  = require('axios');
 const os     = require('os');
 
-const API_URL = process.env.ENTERPRISE_URL || 'http://localhost:3000';
+const { ENTERPRISE_URL, getEncryptionKey } = require('./config');
+const API_URL = ENTERPRISE_URL;
 
 // ── Machine-specific encryption key ──────────────────────────────────────────
 function getMachineKey() {
@@ -47,7 +48,7 @@ function getStore() {
   try {
     _store = new Store({
       name: 'cloudvault-bot',
-      encryptionKey: process.env.ENCRYPTION_KEY || 'cloudvault-default-key',
+      encryptionKey: getEncryptionKey(),
       schema: {
         privateKeyPem: { type: 'string', default: '' },
         publicKeyPem:  { type: 'string', default: '' },
@@ -68,7 +69,7 @@ function getStore() {
       }
       _store = new Store({
         name: 'cloudvault-bot',
-        encryptionKey: process.env.ENCRYPTION_KEY || 'cloudvault-default-key',
+        encryptionKey: getEncryptionKey(),
         schema: {
           privateKeyPem: { type: 'string', default: '' },
           publicKeyPem:  { type: 'string', default: '' },

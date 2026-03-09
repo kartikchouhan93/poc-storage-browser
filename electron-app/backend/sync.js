@@ -6,8 +6,16 @@ const path = require('path');
 const crypto = require('crypto');
 const syncHistory = require('./syncHistory');
 
-const ROOT_PATH = process.env.ROOT_PATH || "/home/abhishek/FMS";
-const API_URL = process.env.API_URL || "http://localhost:3000/api";
+let ROOT_PATH;
+try {
+  const { app } = require('electron');
+  const { getRootPath } = require('./config');
+  ROOT_PATH = getRootPath();
+} catch {
+  ROOT_PATH = require('./config').getRootPath();
+}
+const { ENTERPRISE_URL } = require('./config');
+const API_URL = ENTERPRISE_URL + '/api';
 const SYNC_INTERVAL = 1000 * 60 * 5; // 5 minutes
 
 class SyncManager {

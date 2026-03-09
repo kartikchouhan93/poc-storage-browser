@@ -9,7 +9,7 @@ const authManager = require('./auth');
 const heartbeat = require('./heartbeat');
 const doctor = require('./doctor');
 
-const API_URL = process.env.ENTERPRISE_URL || 'http://localhost:3000';
+const API_URL = require('./config').ENTERPRISE_URL;
 const REPORT_INTERVAL = 5 * 60 * 1000; // 5 minutes
 
 class HealthReporter {
