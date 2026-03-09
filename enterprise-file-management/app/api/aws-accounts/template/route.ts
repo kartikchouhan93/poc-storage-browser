@@ -110,7 +110,7 @@ Resources:
                   - "iam:PutRolePolicy"
                   - "iam:PassRole"
                 Resource:
-                  - !Sub "arn:aws:iam::${AWS::AccountId}:role/CamsEventBridgeCrossAccountRole"
+                  - !Sub "arn:aws:iam::\${AWS::AccountId}:role/CamsEventBridgeCrossAccountRole"
 Outputs:
   RoleArn:
     Description: "The ARN of the newly created IAM Role"

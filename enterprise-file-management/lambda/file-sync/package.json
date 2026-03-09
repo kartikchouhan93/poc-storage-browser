@@ -4,8 +4,8 @@
   "description": "Lambda function to sync S3 events to FileObject DB records",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
-    "bundle": "npm run build && rm -rf bundle_tmp && mkdir bundle_tmp && cp dist/lambda/file-sync/*.js bundle_tmp/ && mkdir -p bundle_tmp/lib/generated && cp -r dist/lib/generated/prisma bundle_tmp/lib/generated/ && cp -rL node_modules bundle_tmp/ && rm -rf bundle_tmp/node_modules/@prisma/studio-core bundle_tmp/node_modules/@prisma/engines bundle_tmp/node_modules/@prisma/fetch-engine bundle_tmp/node_modules/@prisma/get-platform bundle_tmp/node_modules/@prisma/dev bundle_tmp/node_modules/@prisma/client/runtime/query_compiler_fast* bundle_tmp/node_modules/@prisma/client/runtime/query_compiler_small* bundle_tmp/node_modules/@prisma/client/runtime/wasm-compiler* bundle_tmp/node_modules/prisma bundle_tmp/node_modules/typescript bundle_tmp/node_modules/@electric-sql && cd bundle_tmp && zip -r ../function.zip . && cd .. && rm -rf bundle_tmp"
+    "build": "tsc --noEmit",
+    "bundle": "../../node_modules/.bin/esbuild index.ts --bundle --platform=node --format=cjs --target=node20 --outfile=dist_esbuild/index.js --external:@aws-sdk/client-s3 --external:@aws-sdk/client-sts --external:pg --external:@prisma/adapter-pg --tsconfig=tsconfig.json \"--define:import.meta.url=__filename\" && sed -i 's|(0, import_node_url.fileURLToPath)(__filename)|__filename|g' dist_esbuild/index.js && cp -rL node_modules dist_esbuild/ && rm -rf dist_esbuild/node_modules/@prisma/studio-core dist_esbuild/node_modules/@prisma/engines dist_esbuild/node_modules/@prisma/fetch-engine dist_esbuild/node_modules/@prisma/get-platform dist_esbuild/node_modules/@prisma/dev dist_esbuild/node_modules/@prisma/client/runtime/query_compiler_fast* dist_esbuild/node_modules/@prisma/client/runtime/query_compiler_small* dist_esbuild/node_modules/@prisma/client/runtime/wasm-compiler* dist_esbuild/node_modules/prisma dist_esbuild/node_modules/typescript dist_esbuild/node_modules/@electric-sql && cd dist_esbuild && zip -r ../function.zip . && cd .. && rm -rf dist_esbuild"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.0.0",

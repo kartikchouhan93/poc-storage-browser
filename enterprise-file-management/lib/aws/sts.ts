@@ -22,8 +22,10 @@ export async function getTenantAwsCredentials(
   roleArn: string,
   externalId: string,
   sessionName = "CamsPlatformSession",
+  region?: string,
 ) {
-  const cached = credentialCache.get(roleArn);
+  const cacheKey = `${roleArn}-${region || "default"}`;
+  const cached = credentialCache.get(cacheKey);
 
   // If we have a valid cached token that isn't expiring soon, use it
   if (cached && cached.expiration.getTime() - Date.now() > REFRESH_BUFFER_MS) {
@@ -31,14 +33,15 @@ export async function getTenantAwsCredentials(
       accessKeyId: cached.accessKeyId,
       secretAccessKey: cached.secretAccessKey,
       sessionToken: cached.sessionToken,
+      expiration: cached.expiration,
     };
   }
 
   try {
-    // Fallback to us-east-1 for global STS AssumeRole
+    // Generate token against regional endpoint so it is valid instantly without global propagation
     // Include retry backoff for rate limiting
     const stsConfig: any = {
-      region: "us-east-1",
+      region: region || process.env.AWS_REGION || "us-east-1",
       maxAttempts: 5,
     };
 
@@ -73,12 +76,13 @@ export async function getTenantAwsCredentials(
     };
 
     // Update cache
-    credentialCache.set(roleArn, newCredentials);
+    credentialCache.set(cacheKey, newCredentials);
 
     return {
       accessKeyId: newCredentials.accessKeyId,
       secretAccessKey: newCredentials.secretAccessKey,
       sessionToken: newCredentials.sessionToken,
+      expiration: newCredentials.expiration,
     };
   } catch (error) {
     console.error(`Failed to assume role ${roleArn}:`, error);

@@ -1,6 +1,7 @@
 import * as aws from "@pulumi/aws";
 import * as awsx from "@pulumi/awsx";
 import * as pulumi from "@pulumi/pulumi";
+import * as command from "@pulumi/command";
 
 // ECR Repository and Image
 const repo = new awsx.ecr.Repository("app-repo", {
@@ -61,6 +62,18 @@ const db = new aws.rds.Instance("app-db", {
   skipFinalSnapshot: true,
   publiclyAccessible: true,
 });
+
+// Ensure myuser has full permissions on the public schema and all tables.
+// This is needed for the file-sync Lambda which uses @prisma/adapter-pg (raw SQL driver).
+const dbGrant = new command.local.Command(
+  "db-grant",
+  {
+    create: pulumi.interpolate`PGPASSWORD='mypassword123!' psql -h ${db.address} -U myuser -d filemanagement -c "GRANT ALL ON SCHEMA public TO myuser; GRANT ALL ON ALL TABLES IN SCHEMA public TO myuser; ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO myuser;"`,
+    // Re-run whenever the DB endpoint changes (e.g. after a replace)
+    triggers: [db.endpoint],
+  },
+  { dependsOn: [db] },
+);
 
 // Security Group for Application (ALB + Tasks)
 const appSg = new aws.ec2.SecurityGroup("app-sg", {
@@ -213,7 +226,8 @@ const executionRole = new aws.iam.Role("app-execution-role", {
 
 new aws.iam.RolePolicyAttachment("app-execution-role-policy", {
   role: executionRole.name,
-  policyArn: "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
+  policyArn:
+    "arn:aws:iam::aws:policy/service-role/AmazonECSTaskExecutionRolePolicy",
 });
 
 // Fargate Cluster

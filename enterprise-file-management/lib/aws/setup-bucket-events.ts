@@ -141,19 +141,40 @@ export async function setupBucketEventBridge(
   const iamClient = new IAMClient({ region: "us-east-1", credentials }); // IAM is global
 
   // ── Step 1: Enable EventBridge notifications on the S3 bucket ─────────────
-  // We must preserve existing notification configs (SNS/SQS/Lambda) if any
-  const existingConfig = await s3Client.send(
-    new GetBucketNotificationConfigurationCommand({ Bucket: bucketName })
-  );
+  // Best-effort: preserve existing notification configs (SNS/SQS/Lambda) if we have read access.
+  // If GetBucketNotification is denied (older tenant roles), proceed anyway — enabling
+  // EventBridge notifications is a safe additive operation and doesn't affect other configs
+  // when set via the EventBridgeConfiguration key.
+  let existingTopicConfigs: any[] | undefined;
+  let existingQueueConfigs: any[] | undefined;
+  let existingLambdaConfigs: any[] | undefined;
+
+  try {
+    const existingConfig = await s3Client.send(
+      new GetBucketNotificationConfigurationCommand({ Bucket: bucketName })
+    );
+    existingTopicConfigs = existingConfig.TopicConfigurations;
+    existingQueueConfigs = existingConfig.QueueConfigurations;
+    existingLambdaConfigs = existingConfig.LambdaFunctionConfigurations;
+  } catch (err: any) {
+    if (err.name === "AccessDenied" || err.Code === "AccessDenied") {
+      console.warn(
+        `[EventBridge setup] s3:GetBucketNotification denied for ${bucketName} — ` +
+        `proceeding without preserving existing notification configs. ` +
+        `Update the tenant IAM role to include s3:GetBucketNotification to avoid this.`
+      );
+    } else {
+      throw err; // unexpected error — surface it
+    }
+  }
 
   await s3Client.send(
     new PutBucketNotificationConfigurationCommand({
       Bucket: bucketName,
       NotificationConfiguration: {
-        // Preserve existing configs
-        TopicConfigurations: existingConfig.TopicConfigurations,
-        QueueConfigurations: existingConfig.QueueConfigurations,
-        LambdaFunctionConfigurations: existingConfig.LambdaFunctionConfigurations,
+        TopicConfigurations: existingTopicConfigs,
+        QueueConfigurations: existingQueueConfigs,
+        LambdaFunctionConfigurations: existingLambdaConfigs,
         // Enable EventBridge — this is the key addition
         EventBridgeConfiguration: {},
       },
@@ -235,16 +256,29 @@ export async function teardownBucketEventBridge(
 
   // Remove EventBridge notification from S3 bucket (preserve other configs)
   try {
-    const existingConfig = await s3Client.send(
-      new GetBucketNotificationConfigurationCommand({ Bucket: bucketName })
-    );
+    let existingTopicConfigs: any[] | undefined;
+    let existingQueueConfigs: any[] | undefined;
+    let existingLambdaConfigs: any[] | undefined;
+
+    try {
+      const existingConfig = await s3Client.send(
+        new GetBucketNotificationConfigurationCommand({ Bucket: bucketName })
+      );
+      existingTopicConfigs = existingConfig.TopicConfigurations;
+      existingQueueConfigs = existingConfig.QueueConfigurations;
+      existingLambdaConfigs = existingConfig.LambdaFunctionConfigurations;
+    } catch (readErr: any) {
+      if (readErr.name !== "AccessDenied" && readErr.Code !== "AccessDenied") throw readErr;
+      console.warn(`[EventBridge teardown] s3:GetBucketNotification denied for ${bucketName} — clearing all notification config`);
+    }
+
     await s3Client.send(
       new PutBucketNotificationConfigurationCommand({
         Bucket: bucketName,
         NotificationConfiguration: {
-          TopicConfigurations: existingConfig.TopicConfigurations,
-          QueueConfigurations: existingConfig.QueueConfigurations,
-          LambdaFunctionConfigurations: existingConfig.LambdaFunctionConfigurations,
+          TopicConfigurations: existingTopicConfigs,
+          QueueConfigurations: existingQueueConfigs,
+          LambdaFunctionConfigurations: existingLambdaConfigs,
           // Omitting EventBridgeConfiguration disables it
         },
       })
