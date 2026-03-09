@@ -231,7 +231,8 @@ async function upsertFileObject(
 
   // Use cross-account S3 client for BYOA buckets
   const s3 = await getS3ForBucket(bucketInfo);
-  const identity = await fetchUploaderIdentity(s3, bucketName, key);
+  // Folders are virtual (0-byte prefix keys) — HeadObject will 404, skip it
+  const identity = isFolder ? null : await fetchUploaderIdentity(s3, bucketName, key);
   const userId = identity?.userId ?? null;
   const uploaderType = identity?.uploaderType ?? "unknown";
 
@@ -274,6 +275,18 @@ async function deleteFileObject(
   const prisma = getPrismaClient();
   const { bucketId } = bucketInfo;
   const { key } = event;
+
+  const isFolder = key.endsWith("/");
+
+  if (isFolder) {
+    // Delete all children (files and subfolders) whose key starts with this prefix
+    const deleted = await prisma.fileObject.deleteMany({
+      where: { bucketId, key: { startsWith: key } },
+    });
+    console.log(`Deleted folder and ${deleted.count} child objects for key: ${key} in bucket ${bucketId}`);
+    await writeAudit("FOLDER_DELETE", "FileObject", undefined, { bucketId, key, deletedCount: deleted.count, source: "s3-event" }, "SUCCESS", null);
+    return;
+  }
 
   const file = await prisma.fileObject.findFirst({ where: { bucketId, key } });
 

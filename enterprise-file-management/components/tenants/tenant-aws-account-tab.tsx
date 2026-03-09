@@ -65,6 +65,7 @@ export function TenantAwsAccountTab({ tenantId, tenantName, awsAccounts }: Props
   const [showForm, setShowForm]               = useState(false)
   const [validatingId, setValidatingId]       = useState<string | null>(null)
   const [accountToDelete, setAccountToDelete] = useState<AwsAccount | null>(null)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
   const [isDeleting, setIsDeleting]           = useState(false)
   const [pollingIds, setPollingIds]           = useState<Set<string>>(() => {
     // Start polling immediately for any accounts already in a transient state
@@ -132,13 +133,14 @@ export function TenantAwsAccountTab({ tenantId, tenantName, awsAccounts }: Props
     try {
       const res = await fetch(`/api/aws-accounts/${accountToDelete.id}`, { method: "DELETE" })
       const result = await res.json()
-      if (result.success) {
+      if (res.ok && result.success) {
         toast({ title: "Account Deleted", description: "AWS Account connection removed." })
         setAccountToDelete(null)
+        setDeleteError(null)
         router.refresh()
       } else {
-        toast({ title: "Deletion Failed", description: result.error || "Failed to delete.", variant: "destructive" })
-        setAccountToDelete(null)
+        setDeleteError(result.error || "Failed to delete.")
+        // Keep dialog open so user sees the error in context — they must dismiss manually
       }
     } catch {
       toast({ title: "Error", description: "An unexpected error occurred.", variant: "destructive" })
@@ -276,7 +278,7 @@ export function TenantAwsAccountTab({ tenantId, tenantName, awsAccounts }: Props
         )}
       </div>
 
-      <AlertDialog open={!!accountToDelete} onOpenChange={(open) => !open && setAccountToDelete(null)}>
+      <AlertDialog open={!!accountToDelete} onOpenChange={(open) => { if (!open) { setAccountToDelete(null); setDeleteError(null) } }}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>Delete AWS Account connection?</AlertDialogTitle>
@@ -285,8 +287,14 @@ export function TenantAwsAccountTab({ tenantId, tenantName, awsAccounts }: Props
               This action will be blocked if active S3 buckets are still mapped to this account.
             </AlertDialogDescription>
           </AlertDialogHeader>
+          {deleteError && (
+            <div className="flex items-start gap-2 rounded-md border border-destructive/50 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+              <AlertCircle className="h-4 w-4 mt-0.5 shrink-0" />
+              <span>{deleteError}</span>
+            </div>
+          )}
           <AlertDialogFooter>
-            <AlertDialogCancel disabled={isDeleting}>Cancel</AlertDialogCancel>
+            <AlertDialogCancel disabled={isDeleting} onClick={() => setDeleteError(null)}>Cancel</AlertDialogCancel>
             <AlertDialogAction
               className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
               disabled={isDeleting}

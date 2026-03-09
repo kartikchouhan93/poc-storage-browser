@@ -35,18 +35,22 @@ export async function getS3Client(
     }
 
     try {
-      const decryptedExternalId = decrypt(awsAccount.externalId);
-      const creds = await getTenantAwsCredentials(
-        awsAccount.roleArn,
-        decryptedExternalId,
-      );
-
       const client = new S3Client({
         region,
-        credentials: {
-          accessKeyId: creds.accessKeyId,
-          secretAccessKey: creds.secretAccessKey,
-          sessionToken: creds.sessionToken,
+        credentials: async () => {
+          const decryptedExternalId = decrypt(awsAccount.externalId);
+          const creds = await getTenantAwsCredentials(
+            awsAccount.roleArn,
+            decryptedExternalId,
+            "CamsPlatformSession",
+            region,
+          );
+          return {
+            accessKeyId: creds.accessKeyId,
+            secretAccessKey: creds.secretAccessKey,
+            sessionToken: creds.sessionToken,
+            expiration: creds.expiration,
+          };
         },
         maxAttempts: 3,
       });

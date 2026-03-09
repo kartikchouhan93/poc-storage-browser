@@ -31,6 +31,8 @@ export async function validateAwsAccount(
         credentials = await getTenantAwsCredentials(
           account.roleArn,
           decryptedExternalId,
+          "CamsPlatformSession",
+          account.region,
         );
         success = true;
       } catch (err: any) {
