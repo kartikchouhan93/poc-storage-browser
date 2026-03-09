@@ -294,13 +294,14 @@ class SyncManager {
     async upsertBucketMetadata(bucket) {
         // Upsert bucket record into local DB
         database.query(`
-            INSERT INTO "Bucket" (id, name, region, "accountId", "updatedAt")
-            VALUES ($1, $2, $3, $4, $5)
+            INSERT INTO "Bucket" (id, name, region, "accountId", "awsAccountId", "updatedAt")
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 region = EXCLUDED.region,
+                "awsAccountId" = EXCLUDED."awsAccountId",
                 "updatedAt" = EXCLUDED."updatedAt"
-        `, [bucket.id, bucket.name, bucket.region, bucket.accountId, bucket.updatedAt || new Date().toISOString()]);
+        `, [bucket.id, bucket.name, bucket.region, bucket.accountId, bucket.awsAccountId || null, bucket.updatedAt || new Date().toISOString()]);
 
         const files = bucket.files || [];
         for (const file of files) {
