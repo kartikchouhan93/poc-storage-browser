@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
 
   // Authz: Only Tenant Admin (of same tenant) or Platform Admin
   // @ts-ignore
-  const requester = await prisma.user.findUnique({
+  const requester = await prisma.user.findFirst({
     where: { email: payload.email as string },
   });
   if (!requester)
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   // @ts-ignore
-  const requester = await prisma.user.findUnique({
+  const requester = await prisma.user.findFirst({
     where: { email: payload.email as string },
   });
 
@@ -139,7 +139,7 @@ export async function DELETE(request: NextRequest) {
     return NextResponse.json({ error: "Policy not found" }, { status: 404 });
 
   // @ts-ignore
-  const requester = await prisma.user.findUnique({
+  const requester = await prisma.user.findFirst({
     where: { email: payload.email as string },
   });
 

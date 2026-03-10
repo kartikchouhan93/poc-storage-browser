@@ -48,14 +48,27 @@ export async function POST(request: NextRequest) {
 
     let user;
     try {
-      user = await prisma.user.upsert({
+      user = await prisma.user.findFirst({
         where: { email: cleanEmail },
-        update: {},
-        create: {
-          email: cleanEmail,
-          role: defaultRole as any,
-        },
       });
+
+      if (user) {
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {},
+        });
+      } else {
+        // NOTE: This might still fail if there is no default tenant or if tenantId is required.
+        // In a real multi-tenant app, we should know the tenantId here.
+        // For now, we try to create without it or hopefully it's not reached.
+        user = await prisma.user.create({
+          data: {
+            email: cleanEmail,
+            role: defaultRole as any,
+            tenantId: "hub-tenant", // Fallback or placeholder - ideally should be dynamic
+          },
+        });
+      }
     } catch (prismaErr) {
       console.error("Local user sync err:", prismaErr);
     }

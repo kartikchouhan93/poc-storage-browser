@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { jwtDecode } from "jwt-decode";
 import prisma from "@/lib/prisma";
 import { authenticateCognitoUser } from "@/lib/auth-service";
 import { logAudit } from "@/lib/audit";
 import { extractIpFromRequest, validateUserIpAccess } from "@/lib/ip-whitelist";
+import { getHubTenantId } from "@/lib/hub-tenant";
 
 export async function POST(request: NextRequest) {
   try {
@@ -58,28 +60,59 @@ export async function POST(request: NextRequest) {
         ? "PLATFORM_ADMIN"
         : "TEAMMATE";
 
-    let user;
+    let user: any;
     try {
-      // Find the user first to avoid overwriting existing roles with defaultRole
-      let existingUser = await prisma.user.findUnique({
-        where: { email: cleanEmail },
+      // Decode IdToken to extract tenantId from Cognito custom claims
+      const decoded = jwtDecode<Record<string, string>>(authResult.IdToken!);
+      const tokenTenantId = decoded["custom:tenantId"] || null;
+
+      // Platform admin and unassigned users anchor to the hub tenant
+      const isPlatformAdmin = defaultRole === "PLATFORM_ADMIN";
+      const resolvedTenantId =
+        tokenTenantId ??
+        (isPlatformAdmin || !tokenTenantId ? await getHubTenantId() : null);
+
+      if (!resolvedTenantId) {
+        console.error("Login: could not resolve tenantId for", cleanEmail);
+        return NextResponse.json(
+          {
+            error:
+              "Tenant assignment missing. Please contact your administrator.",
+          },
+          { status: 401 },
+        );
+      }
+
+      // Verify tenant exists locally before proceeding
+      const tenantExists = await prisma.tenant.findUnique({
+        where: { id: resolvedTenantId },
+      });
+
+      if (!tenantExists) {
+        console.error(
+          `Login: resolved tenantId ${resolvedTenantId} does not exist in local DB for ${cleanEmail}`,
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Authorized tenant not found in local system. Please contact support.",
+          },
+          { status: 401 },
+        );
+      }
+
+      // Find existing user — scope by tenantId
+      let existingUser = await prisma.user.findFirst({
+        where: { email: cleanEmail, tenantId: resolvedTenantId },
       });
 
       if (existingUser) {
         user = await prisma.user.update({
-          where: { email: cleanEmail },
+          where: { id: existingUser.id },
           data: { hasLoggedIn: true },
           include: {
             policies: true,
-            teams: {
-              include: {
-                team: {
-                  include: {
-                    policies: true,
-                  },
-                },
-              },
-            },
+            teams: { include: { team: { include: { policies: true } } } },
           },
         });
       } else {
@@ -87,24 +120,23 @@ export async function POST(request: NextRequest) {
           data: {
             email: cleanEmail,
             role: defaultRole as any,
+            tenantId: resolvedTenantId,
             hasLoggedIn: true,
           },
           include: {
             policies: true,
-            teams: {
-              include: {
-                team: {
-                  include: {
-                    policies: true,
-                  },
-                },
-              },
-            },
+            teams: { include: { team: { include: { policies: true } } } },
           },
         });
       }
     } catch (prismaErr) {
       console.error("Local user sync err:", prismaErr);
+      return NextResponse.json(
+        {
+          error: "Failed to synchronize local user account. Please try again.",
+        },
+        { status: 500 },
+      );
     }
 
     if (user && !user.isActive) {
@@ -145,6 +177,11 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    const hubTenantId = await getHubTenantId();
+    const isPendingAssignment = user
+      ? user.tenantId === hubTenantId && user.role !== "PLATFORM_ADMIN"
+      : false;
+
     const responseBody = {
       message: "Login successful",
       role: user?.role || defaultRole,
@@ -154,6 +191,7 @@ export async function POST(request: NextRequest) {
       accessToken: authResult.IdToken,
       policies: user?.policies || [],
       teams: user?.teams || [],
+      pendingAssignment: isPendingAssignment,
     };
     const response = NextResponse.json(responseBody);
 

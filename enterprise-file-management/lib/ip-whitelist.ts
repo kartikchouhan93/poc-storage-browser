@@ -1,4 +1,26 @@
 import { NextRequest } from "next/server";
+import { headers } from "next/headers";
+
+export async function extractIpFromHeaders(): Promise<string> {
+  const headerList = await headers();
+  const forwardedFor = headerList.get("x-forwarded-for");
+  let ip = "127.0.0.1";
+
+  if (forwardedFor) {
+    ip = forwardedFor.split(",")[0].trim();
+  } else {
+    const realIp = headerList.get("x-real-ip");
+    if (realIp) {
+      ip = realIp.trim();
+    }
+  }
+
+  if (ip === "::1" || ip === "0:0:0:0:0:0:0:1") {
+    ip = "127.0.0.1";
+  }
+
+  return ip;
+}
 
 export function extractIpFromRequest(request: NextRequest): string {
   // Get IP from headers (x-forwarded-for, x-real-ip) or fallback

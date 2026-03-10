@@ -13,6 +13,7 @@ import { hashPassword } from "@/lib/auth";
 import { Role } from "@/lib/generated/prisma/client";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromHeaders } from "@/lib/ip-whitelist";
 
 export async function getUsers() {
   try {
@@ -21,12 +22,16 @@ export async function getUsers() {
       return { success: false, error: "Unauthorized" };
     }
 
-    let whereClause = {};
+    let whereClause: any = {
+      tenant: {
+        isHubTenant: false,
+      },
+    };
     if (currentUser.role !== "PLATFORM_ADMIN") {
       if (!currentUser.tenantId) {
         return { success: false, error: "Unauthorized" };
       }
-      whereClause = { tenantId: currentUser.tenantId };
+      whereClause.tenantId = currentUser.tenantId;
     }
 
     const users = await prisma.user.findMany({
@@ -99,6 +104,7 @@ export async function inviteUser(formData: FormData) {
       resourceId: newUser.id,
       details: { email, role, tenantId },
       status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath("/users");
@@ -152,6 +158,16 @@ export async function updateUserRole(userId: string, newRole: Role) {
     await prisma.user.update({
       where: { id: userId },
       data: { role: newRole },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_UPDATED",
+      resource: "User",
+      resourceId: userId,
+      details: { oldRole: targetUser.role, newRole },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath("/users");
@@ -220,6 +236,7 @@ export async function createUserWithPassword(formData: FormData) {
       resourceId: newUser.id,
       details: { email, role, tenantId },
       status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${tenantId}`);
@@ -259,10 +276,19 @@ export async function toggleUserStatus(userId: string, isActive: boolean) {
     // Update Cognito
     await toggleUserActiveStatusInCognito(targetUser.email, isActive);
 
-    // Update Database
     await prisma.user.update({
       where: { id: userId },
       data: { isActive },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_UPDATED",
+      resource: "User",
+      resourceId: userId,
+      details: { isActive },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${targetUser.tenantId}`);
@@ -303,6 +329,16 @@ export async function removeUser(userId: string) {
 
     await prisma.user.delete({
       where: { id: userId },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_DELETED",
+      resource: "User",
+      resourceId: userId,
+      details: { email: targetUser.email, tenantId: targetUser.tenantId },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${targetUser.tenantId}`);

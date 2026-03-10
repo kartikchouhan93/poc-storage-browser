@@ -19,7 +19,7 @@ export async function GET(request: NextRequest) {
     let tenantId: string;
 
     if (botAuth) {
-      dbUser = await prisma.user.findUnique({
+      dbUser = await prisma.user.findFirst({
         where: { email: botAuth.email },
         select: {
           id: true,
@@ -40,7 +40,7 @@ export async function GET(request: NextRequest) {
       }
 
       const email = payload.email as string;
-      dbUser = await prisma.user.findUnique({
+      dbUser = await prisma.user.findFirst({
         where: { email },
         select: {
           id: true,
@@ -99,7 +99,10 @@ export async function GET(request: NextRequest) {
         });
       }
       allowedBucketIdFilter = botAuth.allowedBucketIds;
-    } else if (dbUser.role !== "PLATFORM_ADMIN" && dbUser.role !== "TENANT_ADMIN") {
+    } else if (
+      dbUser.role !== "PLATFORM_ADMIN" &&
+      dbUser.role !== "TENANT_ADMIN"
+    ) {
       // Collect policies from direct assignments AND team memberships
       const allPolicies: any[] = [
         ...(dbUser.policies || []),

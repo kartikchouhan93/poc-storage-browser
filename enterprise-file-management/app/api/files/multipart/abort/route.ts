@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     if (!payload || typeof payload !== "object" || !payload.email)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { email: payload.email as string },
       include: {
         policies: true,

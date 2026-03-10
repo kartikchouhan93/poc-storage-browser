@@ -27,7 +27,7 @@ export async function POST(
     if (!payload || !payload.email)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { email: payload.email as string },
       select: { id: true },
     });
@@ -42,13 +42,12 @@ export async function POST(
       include: { awsAccount: true, tenant: true },
     });
 
-    if (!bucket)
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
     if (
-      !process.env.AWS_PROFILE &&
-      !process.env.AWS_ACCESS_KEY_ID &&
-      false &&
-      !bucket.awsAccount?.roleArn
+      !bucket ||
+      (!process.env.AWS_PROFILE &&
+        !process.env.AWS_ACCESS_KEY_ID &&
+        false &&
+        !bucket.awsAccount?.roleArn)
     ) {
       return NextResponse.json(
         {
@@ -61,11 +60,7 @@ export async function POST(
 
     const { getS3Client } = await import("@/lib/s3");
     // Initialize S3 Client
-    const s3 = await getS3Client(
-      null,
-      bucket.region,
-      bucket.awsAccount,
-    );
+    const s3 = await getS3Client(null, bucket.region, bucket.awsAccount);
 
     // Fetch details in parallel
     // We accept that some might fail (e.g. no tags, no encryption)

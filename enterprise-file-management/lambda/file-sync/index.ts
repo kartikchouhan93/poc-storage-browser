@@ -15,6 +15,7 @@ interface ParsedS3Event {
   key: string;
   size: number;
   eTag?: string;
+  ipAddress: string | null;
 }
 
 interface BucketInfo {
@@ -44,6 +45,8 @@ function parseS3Event(body: string): ParsedS3Event[] {
     const size: number = detail.object?.size ?? 0;
     const eTag: string | undefined = detail.object?.etag;
 
+    const ipAddress: string | null = detail["source-ip-address"] ?? null;
+
     let type: ParsedS3Event["type"] = "unknown";
     if (
       detailType === "Object Created" ||
@@ -54,7 +57,7 @@ function parseS3Event(body: string): ParsedS3Event[] {
       type = "deleted";
     }
 
-    return [{ type, bucketName, key, size, eTag }];
+    return [{ type, bucketName, key, size, eTag, ipAddress }];
   }
 
   // ── Format 2: Direct S3 notification ────────────────────────────────────
@@ -67,12 +70,14 @@ function parseS3Event(body: string): ParsedS3Event[] {
       const size: number = record.s3?.object?.size ?? 0;
       const eTag: string | undefined = record.s3?.object?.eTag;
       const eventName: string = record.eventName ?? "";
+      const ipAddress: string | null =
+        record.requestParameters?.sourceIPAddress ?? null;
 
       let type: ParsedS3Event["type"] = "unknown";
       if (eventName.startsWith("ObjectCreated")) type = "created";
       else if (eventName.startsWith("ObjectRemoved")) type = "deleted";
 
-      return { type, bucketName, key, size, eTag };
+      return { type, bucketName, key, size, eTag, ipAddress };
     });
   }
 
@@ -208,9 +213,47 @@ async function writeAudit(
   details: Record<string, unknown>,
   status: "SUCCESS" | "FAILED",
   userId: string | null = null,
+  ipAddress: string | null = null,
 ): Promise<void> {
   const prisma = getPrismaClient();
+
+  let country: string | null = null;
+  let region: string | null = null;
+
+  if (
+    ipAddress &&
+    !ipAddress.startsWith("127.") &&
+    !ipAddress.startsWith("10.") &&
+    !ipAddress.startsWith("192.168.")
+  ) {
+    try {
+      // Use ip-api.com for fresh, external geo-resolution
+      const response = await fetch(
+        `http://ip-api.com/json/${ipAddress}?fields=status,country,regionName`,
+      );
+      const data = (await response.json()) as any;
+      if (data.status === "success") {
+        country = data.country;
+        region = data.regionName;
+      }
+    } catch (err) {
+      console.warn(`[audit] Geo resolution failed for IP ${ipAddress}:`, err);
+    }
+  }
+
   try {
+    console.log("Writing audit log:", {
+      userId,
+      action,
+      resource: resourceId ? `${resource}:${resourceId}` : resource,
+      details: JSON.stringify({ ...details, actor: userId ?? SYSTEM_ACTOR }),
+      status,
+      ipAddress,
+      country,
+      region,
+      createdBy: userId,
+      updatedBy: userId,
+    });
     await prisma.auditLog.create({
       data: {
         userId,
@@ -218,15 +261,75 @@ async function writeAudit(
         resource: resourceId ? `${resource}:${resourceId}` : resource,
         details: JSON.stringify({ ...details, actor: userId ?? SYSTEM_ACTOR }),
         status,
-        ipAddress: null,
-        createdBy: null,
-        updatedBy: null,
-        updatedAt: new Date(),
+        ipAddress,
+        country,
+        region,
+        createdBy: userId,
+        updatedBy: userId,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     console.error("[audit] Failed to write audit log:", err);
+    if (err.meta) {
+      console.error(
+        "[audit] Prisma error meta:",
+        JSON.stringify(err.meta, null, 2),
+      );
+    }
   }
+}
+
+async function ensureParentDirectories(
+  prisma: any,
+  bucketId: string,
+  tenantId: string,
+  parentKey: string,
+  userId: string | null,
+): Promise<string | null> {
+  if (!parentKey) return null;
+
+  const parts = parentKey.split("/");
+  let currentKey = "";
+  let currentParentId: string | null = null;
+
+  for (const part of parts) {
+    if (!part) continue;
+    currentKey = currentKey ? `${currentKey}/${part}` : part;
+    const folderKey = `${currentKey}/`;
+
+    let folder = await prisma.fileObject.findFirst({
+      where: { bucketId, key: folderKey },
+      select: { id: true },
+    });
+
+    if (!folder) {
+      try {
+        folder = await prisma.fileObject.create({
+          data: {
+            name: part,
+            key: folderKey,
+            isFolder: true,
+            size: BigInt(0),
+            bucketId,
+            tenantId,
+            parentId: currentParentId,
+            createdBy: userId,
+          },
+          select: { id: true },
+        });
+      } catch (err: any) {
+        // Handle potential race condition where another invocation created it between our findFirst and create
+        folder = await prisma.fileObject.findFirst({
+          where: { bucketId, key: folderKey },
+          select: { id: true },
+        });
+      }
+    }
+
+    currentParentId = folder?.id ?? null;
+  }
+
+  return currentParentId;
 }
 
 // ─── File sync handlers ───────────────────────────────────────────────────────
@@ -237,7 +340,7 @@ async function upsertFileObject(
 ): Promise<void> {
   const prisma = getPrismaClient();
   const { bucketId, tenantId } = bucketInfo;
-  const { key, size, bucketName } = event;
+  const { key, size, bucketName, ipAddress } = event;
 
   const name = key.split("/").filter(Boolean).pop() ?? key;
   const isFolder = key.endsWith("/");
@@ -268,17 +371,20 @@ async function upsertFileObject(
       { bucketId, key, size, source: "s3-event", op: "updated", uploaderType },
       "SUCCESS",
       userId,
+      ipAddress,
     );
   } else {
     const parentKey = key.split("/").slice(0, -1).join("/");
     let parentId: string | null = null;
 
     if (parentKey) {
-      const parent = await prisma.fileObject.findFirst({
-        where: { bucketId, key: parentKey + "/" },
-        select: { id: true },
-      });
-      parentId = parent?.id ?? null;
+      parentId = await ensureParentDirectories(
+        prisma,
+        bucketId,
+        tenantId,
+        parentKey,
+        userId,
+      );
     }
 
     const created = await prisma.fileObject.create({
@@ -302,6 +408,7 @@ async function upsertFileObject(
       { bucketId, key, size, source: "s3-event", op: "created", uploaderType },
       "SUCCESS",
       userId,
+      ipAddress,
     );
   }
 }

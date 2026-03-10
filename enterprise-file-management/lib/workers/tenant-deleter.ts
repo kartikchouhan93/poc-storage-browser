@@ -11,8 +11,11 @@ export async function deleteTenantWorker(
   tenantId: string,
   tenantName: string,
   requestingUserId: string,
+  ipAddress?: string,
 ): Promise<void> {
-  console.log(`[tenant-deleter] Starting deletion for tenant ${tenantId} (${tenantName})`);
+  console.log(
+    `[tenant-deleter] Starting deletion for tenant ${tenantId} (${tenantName})`,
+  );
 
   try {
     // ── Step 1: Nullify FK refs that point to Users (createdBy/updatedBy)
@@ -96,7 +99,9 @@ export async function deleteTenantWorker(
         await deleteUserInCognito(user.email);
       } catch (err: any) {
         // Log but don't abort — Cognito user may already be deleted
-        console.warn(`[tenant-deleter] Cognito delete failed for ${user.email}: ${err.message}`);
+        console.warn(
+          `[tenant-deleter] Cognito delete failed for ${user.email}: ${err.message}`,
+        );
       }
     }
 
@@ -113,6 +118,7 @@ export async function deleteTenantWorker(
       resourceId: tenantId,
       details: { tenantName, userCount: users.length },
       status: "SUCCESS",
+      ipAddress,
     });
 
     console.log(`[tenant-deleter] Completed deletion for tenant ${tenantId}`);
@@ -126,6 +132,7 @@ export async function deleteTenantWorker(
       resourceId: tenantId,
       details: { tenantName, error: err.message },
       status: "FAILED",
+      ipAddress,
     });
   }
 }

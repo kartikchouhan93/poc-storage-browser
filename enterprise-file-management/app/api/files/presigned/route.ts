@@ -21,11 +21,14 @@ export async function GET(request: NextRequest) {
 
     let user: any = null;
     if (botAuth) {
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: botAuth.email },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     } else {
@@ -33,11 +36,14 @@ export async function GET(request: NextRequest) {
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: payload.email as string },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     }
@@ -53,7 +59,11 @@ export async function GET(request: NextRequest) {
         resource: "FileObject",
         status: "FAILED",
         ipAddress: clientIp,
-        details: { reason: "IP not whitelisted for team", method: request.method, path: request.nextUrl.pathname },
+        details: {
+          reason: "IP not whitelisted for team",
+          method: request.method,
+          path: request.nextUrl.pathname,
+        },
       });
       return NextResponse.json(
         { error: "Forbidden: IP not whitelisted for your team" },
@@ -65,12 +75,16 @@ export async function GET(request: NextRequest) {
     const bucketId = searchParams.get("bucketId");
     const action = searchParams.get("action");
     const parentId = searchParams.get("parentId");
-    const contentType = searchParams.get("contentType") ?? "application/octet-stream";
+    const contentType =
+      searchParams.get("contentType") ?? "application/octet-stream";
     const name = searchParams.get("name");
     const paramKey = searchParams.get("key");
 
     if (!bucketId)
-      return NextResponse.json({ error: "Bucket ID required" }, { status: 400 });
+      return NextResponse.json(
+        { error: "Bucket ID required" },
+        { status: 400 },
+      );
 
     const bucket = await prisma.bucket.findUnique({
       where: { id: bucketId },
@@ -82,11 +96,16 @@ export async function GET(request: NextRequest) {
 
     // ── Bot: validate bucket + action permission ──────────────────────────
     if (botAuth) {
-      const requiredPerm = action === "download" || action === "read" ? "DOWNLOAD" : "UPLOAD";
-      if (!assertBotBucketAccess(botAuth, bucketId, requiredPerm) &&
-          !assertBotBucketAccess(botAuth, bucketId, "WRITE")) {
+      const requiredPerm =
+        action === "download" || action === "read" ? "DOWNLOAD" : "UPLOAD";
+      if (
+        !assertBotBucketAccess(botAuth, bucketId, requiredPerm) &&
+        !assertBotBucketAccess(botAuth, bucketId, "WRITE")
+      ) {
         return NextResponse.json(
-          { error: "Forbidden: bot lacks access to this bucket for this action" },
+          {
+            error: "Forbidden: bot lacks access to this bucket for this action",
+          },
           { status: 403 },
         );
       }
@@ -154,7 +173,7 @@ export async function GET(request: NextRequest) {
 
     // DEV: write FileObject to DB immediately on upload URL generation
     // PROD: handled by file-sync Lambda via S3 event → SQS pipeline
-    if (process.env.NODE_ENV === 'development' && !action) {
+    if (process.env.NODE_ENV === "development" && !action) {
       const fileId = `${bucketId}-${key}-${Date.now()}`;
       await prisma.fileObject.upsert({
         where: { id: fileId },
@@ -167,7 +186,10 @@ export async function GET(request: NextRequest) {
           mimeType: contentType,
           bucket: { connect: { id: bucket.id } },
           tenant: { connect: { id: bucket.tenantId } },
-          parent: (parentId && parentId !== 'null') ? { connect: { id: parentId } } : undefined,
+          parent:
+            parentId && parentId !== "null"
+              ? { connect: { id: parentId } }
+              : undefined,
         },
         update: {
           mimeType: contentType,

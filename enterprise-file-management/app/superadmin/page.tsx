@@ -197,6 +197,7 @@ export default function SuperAdminDashboardPage() {
 
       {/* Tenant Overview Table */}
       <Card>
+
         <CardHeader>
           <CardTitle>Recent Tenants</CardTitle>
           <CardDescription>Latest registered organizations</CardDescription>
@@ -238,6 +239,7 @@ export default function SuperAdminDashboardPage() {
           </Table>
         </CardContent>
       </Card>
+
     </div>
   )
 }

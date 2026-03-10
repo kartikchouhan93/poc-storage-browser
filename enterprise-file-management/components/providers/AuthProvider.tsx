@@ -1,9 +1,16 @@
 
 'use client';
 
-import React, { createContext, useContext, useState, useEffect, useCallback, useRef } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { jwtDecode } from 'jwt-decode';
+
+interface TenantAssignment {
+    userId: string;
+    tenantId: string;
+    tenantName: string;
+    role: string;
+}
 
 interface User {
     id: string;
@@ -14,6 +21,7 @@ interface User {
     tenantName?: string;
     policies?: any[];
     teams?: any[];
+    tenants?: TenantAssignment[];
 }
 
 interface AuthContextType {
@@ -21,6 +29,9 @@ interface AuthContextType {
     login: (token: string, userData: User, redirectPath?: string) => void;
     logout: () => void;
     loading: boolean;
+    activeTenantId: string | null;
+    tenants: TenantAssignment[];
+    switchTenant: (tenantId: string) => void;
 }
 
 const AuthContext = createContext<AuthContextType>({
@@ -28,11 +39,23 @@ const AuthContext = createContext<AuthContextType>({
     login: () => { },
     logout: () => { },
     loading: true,
+    activeTenantId: null,
+    tenants: [],
+    switchTenant: () => { },
 });
+
+function setActiveTenantCookie(tenantId: string) {
+    document.cookie = `x-active-tenant-id=${tenantId}; path=/; SameSite=Strict`;
+}
+
+function clearActiveTenantCookie() {
+    document.cookie = `x-active-tenant-id=; path=/; SameSite=Strict; expires=Thu, 01 Jan 1970 00:00:00 GMT`;
+}
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
     const [user, setUser] = useState<User | null>(null);
     const [loading, setLoading] = useState(true);
+    const [activeTenantId, setActiveTenantId] = useState<string | null>(null);
     const router = useRouter();
 
     const logout = useCallback(async () => {
@@ -44,9 +67,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Clear client-side storage
         localStorage.removeItem('accessToken');
         localStorage.removeItem('user');
+        localStorage.removeItem('activeTenantId');
+        clearActiveTenantCookie();
         setUser(null);
+        setActiveTenantId(null);
         router.push('/login');
     }, [router]);
+
+    const switchTenant = useCallback((tenantId: string) => {
+        localStorage.setItem('activeTenantId', tenantId);
+        setActiveTenantCookie(tenantId);
+        setActiveTenantId(tenantId);
+        window.location.reload();
+    }, []);
 
     // Attempt a silent token refresh using the httpOnly refreshToken cookie.
     // Returns the new accessToken string on success, or null on failure.
@@ -63,6 +96,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
     useEffect(() => {
         async function initAuth() {
+            // Read activeTenantId from localStorage on init
+            const storedActiveTenantId = localStorage.getItem('activeTenantId');
+
             const storedToken = localStorage.getItem('accessToken');
             const storedUser = localStorage.getItem('user');
 
@@ -73,10 +109,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
                     if (!isExpired) {
                         const parsedUser = JSON.parse(storedUser);
+
+                        // Determine activeTenantId: localStorage value or fallback to user.tenantId
+                        const resolvedTenantId = storedActiveTenantId ?? parsedUser.tenantId ?? null;
+                        setActiveTenantId(resolvedTenantId);
+                        if (resolvedTenantId) {
+                            setActiveTenantCookie(resolvedTenantId);
+                        }
+
                         setUser(parsedUser);
 
-                        // Silently refresh user data (including new policies/teams) in background
-                        fetch('/api/auth/me')
+                        // Silently refresh user data (including new policies/teams/tenants) in background
+                        fetch('/api/auth/me', {
+                            headers: resolvedTenantId ? { 'x-active-tenant-id': resolvedTenantId } : {}
+                        })
                             .then(res => res.ok ? res.json() : null)
                             .then(data => {
                                 if (data && data.email) {
@@ -105,10 +151,16 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     const newToken = await tryRefresh();
                     if (newToken) {
                         localStorage.setItem('accessToken', newToken);
-                        setUser(JSON.parse(storedUser));
+                        const parsedUser = JSON.parse(storedUser);
+                        const resolvedTenantId = storedActiveTenantId ?? parsedUser.tenantId ?? null;
+                        setActiveTenantId(resolvedTenantId);
+                        if (resolvedTenantId) setActiveTenantCookie(resolvedTenantId);
+                        setUser(parsedUser);
                     } else {
                         localStorage.removeItem('accessToken');
                         localStorage.removeItem('user');
+                        localStorage.removeItem('activeTenantId');
+                        clearActiveTenantCookie();
                         router.push('/login');
                     }
                 } catch {
@@ -117,17 +169,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
                     if (!newToken) {
                         localStorage.removeItem('accessToken');
                         localStorage.removeItem('user');
+                        localStorage.removeItem('activeTenantId');
+                        clearActiveTenantCookie();
                         router.push('/login');
                     }
                 }
             } else {
                 // No localStorage — check if server httpOnly cookie still has a valid session
                 try {
-                    const res = await fetch('/api/auth/me');
+                    const res = await fetch('/api/auth/me', {
+                        headers: storedActiveTenantId ? { 'x-active-tenant-id': storedActiveTenantId } : {}
+                    });
                     if (res.ok) {
                         const userData = await res.json();
-                        // Hydrate user from server — don't set localStorage here
-                        // (login page will do that on next explicit login)
+                        const resolvedTenantId = storedActiveTenantId ?? userData.tenantId ?? null;
+                        setActiveTenantId(resolvedTenantId);
+                        if (resolvedTenantId) setActiveTenantCookie(resolvedTenantId);
                         setUser(userData);
                     }
                     // If 401, user is simply not logged in — stay null, proxy will redirect
@@ -145,6 +202,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         // Store token client-side for JWT decode / expiry checks
         localStorage.setItem('accessToken', token);
         localStorage.setItem('user', JSON.stringify(userData));
+
+        // Set activeTenantId from user data on login
+        const resolvedTenantId = userData.tenantId ?? null;
+        if (resolvedTenantId) {
+            localStorage.setItem('activeTenantId', resolvedTenantId);
+            setActiveTenantCookie(resolvedTenantId);
+        }
+        setActiveTenantId(resolvedTenantId);
         setUser(userData);
         
         // Clear all bot diagnostics on login (fresh start)
@@ -155,7 +220,15 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
 
     return (
-        <AuthContext.Provider value={{ user, login, logout, loading }}>
+        <AuthContext.Provider value={{
+            user,
+            login,
+            logout,
+            loading,
+            activeTenantId,
+            tenants: user?.tenants ?? [],
+            switchTenant,
+        }}>
             {children}
         </AuthContext.Provider>
     );

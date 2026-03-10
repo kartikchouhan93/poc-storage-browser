@@ -18,6 +18,8 @@ import prisma from "@/lib/prisma";
 import { verifyToken } from "@/lib/token";
 import { jwtVerify } from "jose";
 import { Role } from "@/lib/generated/prisma/client";
+// Note: agent/sync uses Bearer token auth (bot HS256 + Cognito RS256), not session cookies.
+// Tenant isolation is enforced internally by scoping queries to user.tenantId from the token.
 
 const BOT_JWT_SECRET = new TextEncoder().encode(
   process.env.BOT_JWT_SECRET ||
@@ -60,7 +62,7 @@ export async function GET(request: NextRequest) {
         { status: 401 },
       );
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { email: userEmail as string },
     });
     if (!user)

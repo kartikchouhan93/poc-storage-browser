@@ -1,39 +1,37 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/lib/prisma";
 import { Prisma } from "@/lib/generated/prisma/client";
-import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
-import { decrypt } from "@/lib/encryption";
+import { PutObjectCommand } from "@aws-sdk/client-s3";
 import { verifyToken } from "@/lib/token";
 import { getS3Client } from "@/lib/s3";
 import { logAudit } from "@/lib/audit";
 import { checkPermission } from "@/lib/rbac";
 import { extractIpFromRequest, validateUserIpAccess } from "@/lib/ip-whitelist";
-import { getCurrentUser } from "@/lib/session";
 import { verifyBotToken, assertBotBucketAccess } from "@/lib/bot-auth";
+import { withTenantAccess } from "@/lib/middleware/tenant-access";
 
 export async function GET(request: NextRequest) {
-  try {
-    // ── Bot JWT auth (HS256) — must be checked before session/Cognito ──────
-    const bearerToken = request.headers.get("Authorization")?.split(" ")[1];
-    const botAuth = bearerToken ? await verifyBotToken(bearerToken) : null;
+  return withTenantAccess(
+    request,
+    async (req, middlewareUser) => {
+      try {
+        // Bot JWT auth (HS256) — overrides middleware user
+        const bearerToken = req.headers.get("Authorization")?.split(" ")[1];
+        const botAuth = bearerToken ? await verifyBotToken(bearerToken) : null;
 
-    let user: any = null;
-    if (botAuth) {
-      user = await prisma.user.findUnique({
-        where: { email: botAuth.email },
-        include: {
-          tenant: true,
-          policies: true,
-          teams: { include: { team: { include: { policies: true } } } },
-        },
-      });
-    } else {
-      user = await getCurrentUser();
-      if (!user && bearerToken) {
-        const payload = await verifyToken(bearerToken);
-        if (payload && typeof payload === "object" && payload.email) {
+        let user: any = middlewareUser;
+        if (botAuth) {
+          user = await prisma.user.findFirst({
+            where: { email: botAuth.email },
+            include: {
+              tenant: true,
+              policies: true,
+              teams: { include: { team: { include: { policies: true } } } },
+            },
+          });
+        } else if (!user.policies) {
           user = await prisma.user.findUnique({
-            where: { email: payload.email as string },
+            where: { id: user.id },
             include: {
               tenant: true,
               policies: true,
@@ -41,326 +39,310 @@ export async function GET(request: NextRequest) {
             },
           });
         }
-      }
-    }
 
-    if (!user) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+        if (!user)
+          return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const clientIp = extractIpFromRequest(request);
-    if (!validateUserIpAccess(clientIp, user)) {
-      logAudit({
-        userId: user.id,
-        action: "IP_ACCESS_DENIED",
-        resource: "FileObject",
-        status: "FAILED",
-        ipAddress: clientIp,
-        details: {
-          reason: "IP not whitelisted for team",
-          method: request.method,
-          path: request.nextUrl.pathname,
-        },
-      });
-      return NextResponse.json(
-        { error: "Forbidden: IP not whitelisted for your team" },
-        { status: 403 },
-      );
-    }
-
-    const searchParams = request.nextUrl.searchParams;
-    const bucketId = searchParams.get("bucketId");
-    const parentId = searchParams.get("parentId");
-    const syncAll = searchParams.get("syncAll") === "true";
-    const q = searchParams.get("q")?.trim();
-
-    // ── Bot: validate bucketId against permitted buckets ──────────────────
-    if (botAuth) {
-      if (bucketId) {
-        if (!assertBotBucketAccess(botAuth, bucketId, "READ")) {
+        const clientIp = extractIpFromRequest(req);
+        if (!validateUserIpAccess(clientIp, user)) {
+          logAudit({
+            userId: user.id,
+            action: "IP_ACCESS_DENIED",
+            resource: "FileObject",
+            status: "FAILED",
+            ipAddress: clientIp,
+            details: {
+              reason: "IP not whitelisted for team",
+              method: req.method,
+              path: req.nextUrl.pathname,
+            },
+          });
           return NextResponse.json(
-            { error: "Forbidden: bot lacks READ access to this bucket" },
+            { error: "Forbidden: IP not whitelisted for your team" },
             { status: 403 },
           );
         }
-      } else if (botAuth.allowedBucketIds.length === 0) {
-        return NextResponse.json([]);
+
+        const searchParams = req.nextUrl.searchParams;
+        const bucketId = searchParams.get("bucketId");
+        const parentId = searchParams.get("parentId");
+        const syncAll = searchParams.get("syncAll") === "true";
+        const q = searchParams.get("q")?.trim();
+
+        if (botAuth) {
+          if (bucketId) {
+            if (!assertBotBucketAccess(botAuth, bucketId, "READ")) {
+              return NextResponse.json(
+                { error: "Forbidden: bot lacks READ access to this bucket" },
+                { status: 403 },
+              );
+            }
+          } else if (botAuth.allowedBucketIds.length === 0) {
+            return NextResponse.json([]);
+          }
+        }
+
+        const where: any = {};
+        if (bucketId) {
+          where.bucketId = bucketId;
+        } else if (botAuth) {
+          where.bucketId = { in: botAuth.allowedBucketIds };
+        }
+
+        if (parentId) {
+          where.parentId = parentId;
+        } else if (bucketId && !syncAll) {
+          where.parentId = null;
+        }
+
+        if (q) {
+          const ftsResults = await prisma.$queryRaw<{ id: string }[]>(
+            Prisma.sql`
+              SELECT id FROM "FileObject"
+              WHERE "searchVector" @@ websearch_to_tsquery('english', ${q})
+              ${bucketId ? Prisma.sql`AND "bucketId" = ${bucketId}` : Prisma.empty}
+            `,
+          );
+          const matchingIds = ftsResults.map((r) => r.id);
+          if (matchingIds.length === 0) return NextResponse.json([]);
+          where.id = { in: matchingIds };
+          delete where.parentId;
+        }
+
+        const files = await prisma.fileObject.findMany({
+          where,
+          orderBy: { isFolder: "desc" },
+          include: { children: true },
+        });
+
+        const fileItems = files.map((f) => ({
+          id: f.id,
+          name: f.name,
+          type: f.isFolder
+            ? "folder"
+            : f.mimeType?.includes("image")
+              ? "image"
+              : f.mimeType?.includes("pdf")
+                ? "pdf"
+                : "document",
+          size: Number(f.size) || 0,
+          modifiedAt: f.updatedAt.toISOString(),
+          owner: "Admin",
+          shared: false,
+          starred: false,
+          children: f.children.map((c) => ({ id: c.id })),
+          key: f.key,
+          isFolder: f.isFolder,
+          mimeType: f.mimeType,
+          bucketId: f.bucketId,
+          parentId: f.parentId,
+          createdAt: f.createdAt,
+          updatedAt: f.updatedAt,
+        }));
+
+        return NextResponse.json(fileItems);
+      } catch (error) {
+        console.error("Failed to fetch files:", error);
+        return NextResponse.json(
+          { error: "Failed to fetch files" },
+          { status: 500 },
+        );
       }
-    }
-
-    const where: any = {};
-
-    if (bucketId) {
-      where.bucketId = bucketId;
-    } else if (botAuth) {
-      // No bucketId specified — scope to all permitted buckets
-      where.bucketId = { in: botAuth.allowedBucketIds };
-    }
-
-    if (parentId) {
-      where.parentId = parentId;
-    } else if (bucketId && !syncAll) {
-      where.parentId = null;
-    }
-
-    // If a search query is provided, use PostgreSQL tsvector FTS to find matching IDs
-    if (q) {
-      const ftsResults = await prisma.$queryRaw<{ id: string }[]>(
-        Prisma.sql`
-          SELECT id FROM "FileObject"
-          WHERE "searchVector" @@ websearch_to_tsquery('english', ${q})
-          ${bucketId ? Prisma.sql`AND "bucketId" = ${bucketId}` : Prisma.empty}
-        `,
-      );
-      const matchingIds = ftsResults.map((r) => r.id);
-
-      // If there are no matches, return an empty array early
-      if (matchingIds.length === 0) {
-        return NextResponse.json([]);
-      }
-
-      // Narrow the existing where clause to only the FTS-matched IDs
-      where.id = { in: matchingIds };
-      // When searching, show results from all levels (don't restrict by parentId)
-      delete where.parentId;
-    }
-
-    const files = await prisma.fileObject.findMany({
-      where,
-      orderBy: { isFolder: "desc" },
-      include: {
-        children: true,
-      },
-    });
-
-    const fileItems = files.map((f) => ({
-      id: f.id,
-      name: f.name,
-      type: f.isFolder
-        ? "folder"
-        : f.mimeType?.includes("image")
-          ? "image"
-          : f.mimeType?.includes("pdf")
-            ? "pdf"
-            : "document",
-      size: Number(f.size) || 0,
-      modifiedAt: f.updatedAt.toISOString(),
-      owner: "Admin",
-      shared: false,
-      starred: false,
-      children: f.children.map((c) => ({ id: c.id })),
-      // Fields needed for SyncEngine in Electron
-      key: f.key,
-      isFolder: f.isFolder,
-      mimeType: f.mimeType,
-      bucketId: f.bucketId,
-      parentId: f.parentId,
-      createdAt: f.createdAt,
-      updatedAt: f.updatedAt,
-    }));
-
-    return NextResponse.json(fileItems);
-  } catch (error) {
-    console.error("Failed to fetch files:", error);
-    return NextResponse.json(
-      { error: "Failed to fetch files" },
-      { status: 500 },
-    );
-  }
+    },
+    { allowSelfTenant: true },
+  );
 }
 
 export async function POST(request: NextRequest) {
-  try {
-    const token = request.headers.get("Authorization")?.split(" ")[1];
-    if (!token)
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-    // ── Bot JWT auth (HS256) ───────────────────────────────────────────────
-    const botAuth = await verifyBotToken(token);
-
-    let user: any = null;
-    if (botAuth) {
-      user = await prisma.user.findUnique({
-        where: { email: botAuth.email },
-        include: {
-          policies: true,
-          teams: {
-            where: { isDeleted: false },
-            include: { team: { include: { policies: true } } },
-          },
-        },
-      });
-    } else {
-      const payload = await verifyToken(token);
-      if (!payload || typeof payload !== "object" || !payload.email)
-        return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-
-      user = await prisma.user.findUnique({
-        where: { email: payload.email as string },
-        include: {
-          policies: true,
-          teams: {
-            where: { isDeleted: false },
-            include: { team: { include: { policies: true } } },
-          },
-        },
-      });
-    }
-
-    if (!user)
-      return NextResponse.json({ error: "User not found" }, { status: 404 });
-
-    const clientIp = extractIpFromRequest(request);
-    if (!validateUserIpAccess(clientIp, user)) {
-      logAudit({
-        userId: user.id,
-        action: "IP_ACCESS_DENIED",
-        resource: "FileObject",
-        status: "FAILED",
-        ipAddress: clientIp,
-        details: {
-          reason: "IP not whitelisted for team",
-          method: request.method,
-          path: request.nextUrl.pathname,
-        },
-      });
-      return NextResponse.json(
-        { error: "Forbidden: IP not whitelisted for your team" },
-        { status: 403 },
-      );
-    }
-
-    const body = (await request.json()) as any;
-    const { name, isFolder, parentId, bucketId, size, mimeType } = body;
-
-    if (!name || !bucketId) {
-      return NextResponse.json(
-        { error: "Name and bucketId are required" },
-        { status: 400 },
-      );
-    }
-
-    // ── Bot: validate bucket access and required permission ───────────────
-    if (botAuth) {
-      const requiredPerm = isFolder ? "WRITE" : "UPLOAD";
-      if (!botAuth.allowedBucketIds.includes(bucketId) ||
-          (!botAuth.hasBucketPermission(bucketId, requiredPerm) &&
-           !botAuth.hasBucketPermission(bucketId, "WRITE"))) {
-        return NextResponse.json(
-          { error: "Forbidden: bot lacks WRITE/UPLOAD access to this bucket" },
-          { status: 403 },
-        );
-      }
-    }
-
-    // 1. Fetch Bucket and Account to get credentials
-    const bucket = await prisma.bucket.findUnique({
-      where: { id: bucketId },
-      include: { awsAccount: true, tenant: true },
-    });
-
-    if (!bucket) {
-      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
-    }
-
-    // For non-bot users, check RBAC permission
-    if (!botAuth) {
-      const hasAccess = await checkPermission(user, "WRITE", {
-        tenantId: bucket.tenantId,
-        resourceType: "bucket",
-        resourceId: bucket.id,
-      });
-
-      if (!hasAccess) {
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
-      }
-    }
-
-    const account = null;
-    if (account && (!account.awsAccessKeyId || !account.awsSecretAccessKey)) {
-      // NOTE: Removed strict credential blocking here, as `getS3Client` handles fallbacks.
-      // We will let S3 SDK attempt to find credentials.
-    }
-
-    // 2. Determine the full Key (path)
-    let key = name;
-    if (parentId) {
-      const parent = await prisma.fileObject.findUnique({
-        where: { id: parentId },
-      });
-      if (parent) {
-        key = `${parent.key}/${name}`;
-      }
-    }
-
-    // 3. If it's a folder, create it in S3
-    if (isFolder) {
+  return withTenantAccess(
+    request,
+    async (req, middlewareUser) => {
       try {
-        const s3 = await getS3Client(account, bucket.region, bucket.awsAccount);
+        const token = req.headers.get("Authorization")?.split(" ")[1];
+        const botAuth = token ? await verifyBotToken(token) : null;
 
-        // S3 folders are typically represented by a zero-byte object with a trailing slash
-        const s3Key = key.endsWith("/") ? key : `${key}/`;
+        let user: any = middlewareUser;
+        if (botAuth) {
+          user = await prisma.user.findFirst({
+            where: { email: botAuth.email },
+            include: {
+              policies: true,
+              teams: {
+                where: { isDeleted: false },
+                include: { team: { include: { policies: true } } },
+              },
+            },
+          });
+        } else if (!user.policies) {
+          user = await prisma.user.findUnique({
+            where: { id: user.id },
+            include: {
+              policies: true,
+              teams: {
+                where: { isDeleted: false },
+                include: { team: { include: { policies: true } } },
+              },
+            },
+          });
+        }
 
-        await s3.send(
-          new PutObjectCommand({
-            Bucket: bucket.name,
-            Key: s3Key,
-            Body: "", // Empty body for folder
-          }),
-        );
-      } catch (s3Error: any) {
-        console.error("Failed to create folder in S3:", s3Error);
+        if (!user)
+          return NextResponse.json(
+            { error: "User not found" },
+            { status: 404 },
+          );
+
+        const clientIp = extractIpFromRequest(req);
+        if (!validateUserIpAccess(clientIp, user)) {
+          logAudit({
+            userId: user.id,
+            action: "IP_ACCESS_DENIED",
+            resource: "FileObject",
+            status: "FAILED",
+            ipAddress: clientIp,
+            details: {
+              reason: "IP not whitelisted for team",
+              method: req.method,
+              path: req.nextUrl.pathname,
+            },
+          });
+          return NextResponse.json(
+            { error: "Forbidden: IP not whitelisted for your team" },
+            { status: 403 },
+          );
+        }
+
+        const body = (await req.json()) as any;
+        const { name, isFolder, parentId, bucketId, size, mimeType } = body;
+
+        if (!name || !bucketId) {
+          return NextResponse.json(
+            { error: "Name and bucketId are required" },
+            { status: 400 },
+          );
+        }
+
+        if (botAuth) {
+          const requiredPerm = isFolder ? "WRITE" : "UPLOAD";
+          if (
+            !botAuth.allowedBucketIds.includes(bucketId) ||
+            (!botAuth.hasBucketPermission(bucketId, requiredPerm) &&
+              !botAuth.hasBucketPermission(bucketId, "WRITE"))
+          ) {
+            return NextResponse.json(
+              {
+                error:
+                  "Forbidden: bot lacks WRITE/UPLOAD access to this bucket",
+              },
+              { status: 403 },
+            );
+          }
+        }
+
+        const bucket = await prisma.bucket.findUnique({
+          where: { id: bucketId },
+          include: { awsAccount: true, tenant: true },
+        });
+        if (!bucket)
+          return NextResponse.json(
+            { error: "Bucket not found" },
+            { status: 404 },
+          );
+
+        if (!botAuth) {
+          const hasAccess = await checkPermission(user, "WRITE", {
+            tenantId: bucket.tenantId,
+            resourceType: "bucket",
+            resourceId: bucket.id,
+          });
+          if (!hasAccess)
+            return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        }
+
+        let key = name;
+        if (parentId) {
+          const parent = await prisma.fileObject.findUnique({
+            where: { id: parentId },
+          });
+          if (parent) key = `${parent.key}/${name}`;
+        }
+
+        if (isFolder) {
+          try {
+            const s3 = await getS3Client(
+              null,
+              bucket.region,
+              bucket.awsAccount,
+            );
+            const s3Key = key.endsWith("/") ? key : `${key}/`;
+            await s3.send(
+              new PutObjectCommand({
+                Bucket: bucket.name,
+                Key: s3Key,
+                Body: "",
+              }),
+            );
+          } catch (s3Error: any) {
+            console.error("Failed to create folder in S3:", s3Error);
+            return NextResponse.json(
+              { error: `S3 Sync Failed: ${s3Error.message}` },
+              { status: 502 },
+            );
+          }
+        }
+
+        console.log(">> @@@ file Upload::: multipart", process.env.NODE_ENV);
+
+        if (process.env.NODE_ENV === "development") {
+          const fileId = `${bucketId}-${key}-${Date.now()}`;
+          await prisma.fileObject.upsert({
+            where: { id: fileId },
+            create: {
+              id: fileId,
+              name,
+              key,
+              isFolder: !!isFolder,
+              size: size ? BigInt(size) : null,
+              mimeType: mimeType || null,
+              bucket: { connect: { id: bucket.id } },
+              tenant: { connect: { id: bucket.tenantId } },
+              parent: parentId ? { connect: { id: parentId } } : undefined,
+            },
+            update: {
+              name,
+              size: size ? BigInt(size) : null,
+              mimeType: mimeType || null,
+              updatedAt: new Date(),
+            },
+          });
+        }
+
+        logAudit({
+          userId: user.id,
+          action: isFolder ? "FOLDER_CREATE" : "FILE_UPLOAD",
+          resource: "FileObject",
+          status: "SUCCESS",
+          ipAddress: extractIpFromRequest(req),
+          details: {
+            bucketId: bucket.id,
+            bucketName: bucket.name,
+            key,
+            isFolder,
+          },
+        });
+
         return NextResponse.json(
-          { error: `S3 Sync Failed: ${s3Error.message}` },
-          { status: 502 },
+          { key, bucketId, status: "accepted" },
+          { status: 202 },
+        );
+      } catch (error) {
+        console.error("Failed to create file:", error);
+        return NextResponse.json(
+          { error: "Failed to create file" },
+          { status: 500 },
         );
       }
-    }
-
-    // DB record creation:
-    console.log(">> @@@ file Upload::: multipart", process.env.NODE_ENV)
-
-    // - DEV: write directly to DB (no SQS/Lambda running locally)
-    // - PROD: handled asynchronously by the file-sync Lambda via S3 event → SQS → Lambda
-    if (process.env.NODE_ENV === 'development') {
-      const fileId = `${bucketId}-${key}-${Date.now()}`;
-      await prisma.fileObject.upsert({
-        where: { id: fileId },
-        create: {
-          id: fileId,
-          name,
-          key,
-          isFolder: !!isFolder,
-          size: size ? BigInt(size) : null,
-          mimeType: mimeType || null,
-          bucket: { connect: { id: bucket.id } },
-          tenant: { connect: { id: bucket.tenantId } },
-          parent: parentId ? { connect: { id: parentId } } : undefined,
-        },
-        update: {
-          name,
-          size: size ? BigInt(size) : null,
-          mimeType: mimeType || null,
-          updatedAt: new Date(),
-        },
-      });
-    }
-
-    logAudit({
-      userId: user.id,
-      action: isFolder ? "FOLDER_CREATE" : "FILE_UPLOAD",
-      resource: "FileObject",
-      status: "SUCCESS",
-      ipAddress: extractIpFromRequest(request),
-      details: { bucketId: bucket.id, bucketName: bucket.name, key, isFolder },
-    });
-
-    return NextResponse.json({ key, bucketId, status: "accepted" }, { status: 202 });
-  } catch (error) {
-    console.error("Failed to create file:", error);
-    return NextResponse.json(
-      { error: "Failed to create file" },
-      { status: 500 },
-    );
-  }
+    },
+    { allowSelfTenant: true },
+  );
 }

@@ -56,7 +56,9 @@ export async function getPlatformStats(filters?: PlatformStatsFilters) {
       },
     }),
     prisma.bucket.count({ where: createdAtFilter }),
-    prisma.botIdentity.count({ where: { isActive: true, ...createdAtFilter } }),
+    prisma.botIdentity.count({
+      where: { isActive: true, ...createdAtFilter },
+    }),
     prisma.fileObject.aggregate({
       where: createdAtFilter,
       _sum: { size: true },

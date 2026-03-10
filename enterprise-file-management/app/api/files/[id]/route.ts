@@ -30,11 +30,14 @@ export async function DELETE(
 
     let user: any = null;
     if (botAuth) {
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: botAuth.email },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     } else {
@@ -42,11 +45,14 @@ export async function DELETE(
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: payload.email as string },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     }
@@ -62,7 +68,11 @@ export async function DELETE(
         resource: "FileObject",
         status: "FAILED",
         ipAddress: clientIp,
-        details: { reason: "IP not whitelisted for team", method: request.method, path: request.nextUrl.pathname },
+        details: {
+          reason: "IP not whitelisted for team",
+          method: request.method,
+          path: request.nextUrl.pathname,
+        },
       });
       return NextResponse.json(
         { error: "Forbidden: IP not whitelisted for your team" },
@@ -82,8 +92,10 @@ export async function DELETE(
 
     // ── Bot: validate bucket access ───────────────────────────────────────
     if (botAuth) {
-      if (!assertBotBucketAccess(botAuth, file.bucketId, "DELETE") &&
-          !assertBotBucketAccess(botAuth, file.bucketId, "WRITE")) {
+      if (
+        !assertBotBucketAccess(botAuth, file.bucketId, "DELETE") &&
+        !assertBotBucketAccess(botAuth, file.bucketId, "WRITE")
+      ) {
         return NextResponse.json(
           { error: "Forbidden: bot lacks DELETE access to this bucket" },
           { status: 403 },
@@ -162,7 +174,10 @@ export async function DELETE(
       },
     });
 
-    return NextResponse.json({ success: true, status: "accepted" }, { status: 202 });
+    return NextResponse.json(
+      { success: true, status: "accepted" },
+      { status: 202 },
+    );
   } catch (error) {
     console.error("Delete error:", error);
     return NextResponse.json(
@@ -186,11 +201,14 @@ export async function PATCH(
 
     let user: any = null;
     if (botAuth) {
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: botAuth.email },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     } else {
@@ -198,11 +216,14 @@ export async function PATCH(
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: payload.email as string },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     }
@@ -218,7 +239,11 @@ export async function PATCH(
         resource: "FileObject",
         status: "FAILED",
         ipAddress: clientIp,
-        details: { reason: "IP not whitelisted for team", method: request.method, path: request.nextUrl.pathname },
+        details: {
+          reason: "IP not whitelisted for team",
+          method: request.method,
+          path: request.nextUrl.pathname,
+        },
       });
       return NextResponse.json(
         { error: "Forbidden: IP not whitelisted for your team" },

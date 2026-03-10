@@ -146,7 +146,7 @@ export async function PUT(
 
     const { shareId } = await params;
     const body = await request.json();
-    const { expiryDays, downloadLimit, password } = body;
+    const { expiryDate: expiryDateInput, expiryDays, downloadLimit, password } = body;
 
     const share = await prisma.share.findUnique({
       where: { id: shareId },
@@ -174,7 +174,26 @@ export async function PUT(
       status: "ACTIVE", // Editing it might revive an expired share if we extend dates/limits
     };
 
-    if (expiryDays) {
+    if (expiryDateInput) {
+      // Validate ISO format
+      const parsed = new Date(expiryDateInput);
+      if (isNaN(parsed.getTime())) {
+        return NextResponse.json({ error: "Invalid expiryDate format" }, { status: 400 });
+      }
+
+      // Validate it's a future date (not today or in the past)
+      const now = new Date();
+      const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const inputDateUTC = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+
+      if (inputDateUTC.getTime() <= todayUTC.getTime()) {
+        return NextResponse.json({ error: "expiryDate must be a future date" }, { status: 400 });
+      }
+
+      // Set time to end-of-day 23:59:59 UTC
+      updateData.expiry = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 23, 59, 59, 0));
+    } else if (expiryDays) {
+      // Backward compat: use expiryDays
       const expiryDate = new Date();
       expiryDate.setDate(
         expiryDate.getDate() + parseInt(String(expiryDays), 10),
@@ -204,7 +223,9 @@ export async function PUT(
       changes: {},
     };
 
-    if (expiryDays)
+    if (expiryDateInput)
+      auditDetails.changes.expiryDate = expiryDateInput;
+    else if (expiryDays)
       auditDetails.changes.extendedExpiryDays = parseInt(
         String(expiryDays),
         10,
