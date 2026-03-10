@@ -219,11 +219,15 @@ const initDB = () => {
         "createdAt" TEXT DEFAULT (datetime('now')),
         "synced" INTEGER DEFAULT 0,
         "syncJobId" TEXT,
-        "configId" TEXT
+        "configId" TEXT,
+        "userId" TEXT,
+        "botId" TEXT
       );
     `);
     safeAddColumn('LocalSyncActivity', 'syncJobId', 'TEXT');
     safeAddColumn('LocalSyncActivity', 'configId', 'TEXT');
+    safeAddColumn('LocalSyncActivity', 'userId', 'TEXT');
+    safeAddColumn('LocalSyncActivity', 'botId', 'TEXT');
 
     conn.exec(`
       CREATE TABLE IF NOT EXISTS "SyncConfig" (
@@ -236,12 +240,16 @@ const initDB = () => {
         "updatedAt" TEXT DEFAULT (datetime('now')),
         "lastSync" TEXT,
         "direction" TEXT DEFAULT 'DOWNLOAD',
-        "isSyncing" INTEGER DEFAULT 0
+        "isSyncing" INTEGER DEFAULT 0,
+        "userId" TEXT,
+        "botId" TEXT
       );
     `);
     safeAddColumn('SyncConfig', 'useWatcher', 'INTEGER', '1');
     safeAddColumn('SyncConfig', 'direction', 'TEXT', "'DOWNLOAD'");
     safeAddColumn('SyncConfig', 'isSyncing', 'INTEGER', '0');
+    safeAddColumn('SyncConfig', 'userId', 'TEXT');
+    safeAddColumn('SyncConfig', 'botId', 'TEXT');
 
     conn.exec(`UPDATE "SyncConfig" SET "isSyncing" = 0 WHERE "isSyncing" = 1;`);
 
@@ -275,7 +283,7 @@ const initDB = () => {
       WHERE rowid NOT IN (
         SELECT rowid FROM (
           SELECT rowid, ROW_NUMBER() OVER (
-            PARTITION BY action, "fileName", status
+            PARTITION BY action, "fileName", status, COALESCE("userId", '')
             ORDER BY "createdAt" DESC
           ) AS rn
           FROM "LocalSyncActivity"
@@ -364,23 +372,24 @@ const closeDB = () => {
 };
 
 /**
- * Wipe all user data tables on logout.
- * Preserves schema (tables remain), just deletes all rows.
+ * Wipe cloud-metadata tables on logout.
+ * Preserves sync history tables (LocalSyncActivity, SyncJob, SyncConfig, SyncMapping)
+ * since they are scoped by userId/botId and must survive re-login.
  * Order respects FK constraints (children before parents).
  */
 const wipeAllData = () => {
   const conn = getDb();
   conn.exec('BEGIN TRANSACTION;');
   try {
+    // Only wipe cloud-mirror data — NOT sync history/config (those are userId-scoped)
     const tables = [
-      'LocalSyncActivity', 'SyncJob', 'SyncMapping', 'SyncConfig',
       'SyncState', 'FileObject', 'Bucket', 'Account', 'Tenant', 'KVStore',
     ];
     for (const t of tables) {
       conn.exec(`DELETE FROM "${t}";`);
     }
     conn.exec('COMMIT;');
-    console.log('[Database] All data wiped on logout');
+    console.log('[Database] Cloud metadata wiped on logout (sync history preserved)');
   } catch (e) {
     conn.exec('ROLLBACK;');
     console.error('[Database] Wipe failed:', e);

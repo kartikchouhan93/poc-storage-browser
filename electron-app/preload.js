@@ -1,23 +1,58 @@
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
+// ── IPC Timing Instrumentation ────────────────────────────────────────────
+const ipcTimingLog = [];
+const IPC_LOG_MAX = 100;
+const ipcTimingListeners = new Set();
+
+function timedInvoke(channel, ...args) {
+  const start = performance.now();
+  return ipcRenderer.invoke(channel, ...args).then(
+    (result) => {
+      const duration = Math.round((performance.now() - start) * 100) / 100;
+      const entry = { channel, duration, ts: Date.now(), ok: true };
+      ipcTimingLog.push(entry);
+      if (ipcTimingLog.length > IPC_LOG_MAX) ipcTimingLog.shift();
+      ipcTimingListeners.forEach(cb => cb(entry));
+      return result;
+    },
+    (err) => {
+      const duration = Math.round((performance.now() - start) * 100) / 100;
+      const entry = { channel, duration, ts: Date.now(), ok: false };
+      ipcTimingLog.push(entry);
+      if (ipcTimingLog.length > IPC_LOG_MAX) ipcTimingLog.shift();
+      ipcTimingListeners.forEach(cb => cb(entry));
+      throw err;
+    }
+  );
+}
+
+contextBridge.exposeInMainWorld('ipcTiming', {
+  getLog: () => [...ipcTimingLog],
+  onEntry: (cb) => {
+    ipcTimingListeners.add(cb);
+    return () => ipcTimingListeners.delete(cb);
+  },
+});
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // 1. File Browser & Management
   listContent: (args) => {
     if (typeof args === 'string') {
-        return ipcRenderer.invoke('list-path-content', { folderPath: args });
+        return timedInvoke('list-path-content', { folderPath: args });
     }
-    return ipcRenderer.invoke('list-path-content', args);
+    return timedInvoke('list-path-content', args);
   },
-  createFolder: (path) => ipcRenderer.invoke('create-folder', path),
-  openFile: (path) => ipcRenderer.invoke('open-file', path),
+  createFolder: (path) => timedInvoke('create-folder', path),
+  openFile: (path) => timedInvoke('open-file', path),
   
   // 2. Transfers
-  selectFileForUpload: () => ipcRenderer.invoke('select-file'),
-  selectFolderForUpload: () => ipcRenderer.invoke('select-folder-upload'),
-  uploadItems: (items, currentPath, shouldZip) => ipcRenderer.invoke('upload-items', { items, currentPath, shouldZip }),
-  downloadFile: (url, targetPath) => ipcRenderer.invoke('download-file', { url, targetPath }),
-  downloadS3File: (bucketId, s3Key, localPath, totalSize) => ipcRenderer.invoke('download-s3-file', { bucketId, s3Key, localPath, totalSize }),
-  selectDownloadFolder: () => ipcRenderer.invoke('select-sync-folder'), // reuse existing folder picker
+  selectFileForUpload: () => timedInvoke('select-file'),
+  selectFolderForUpload: () => timedInvoke('select-folder-upload'),
+  uploadItems: (items, currentPath, shouldZip) => timedInvoke('upload-items', { items, currentPath, shouldZip }),
+  downloadFile: (url, targetPath) => timedInvoke('download-file', { url, targetPath }),
+  downloadS3File: (bucketId, s3Key, localPath, totalSize) => timedInvoke('download-s3-file', { bucketId, s3Key, localPath, totalSize }),
+  selectDownloadFolder: () => timedInvoke('select-sync-folder'), // reuse existing folder picker
 
   // 2b. Get the real filesystem path from a File object (Electron 32+ replacement for File.prototype.path)
   getFilePath: (file) => {
@@ -30,10 +65,13 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
   
   // 2c. Get the root sync path from main process
-  getRootPath: () => ipcRenderer.invoke('get-root-path'),
+  getRootPath: () => timedInvoke('get-root-path'),
 
   // 3. Status Tracking
-  getActiveTransfers: () => ipcRenderer.invoke('get-active-transfers'),
+  getActiveTransfers: () => timedInvoke('get-active-transfers'),
+  pauseTransfer:      (id) => timedInvoke('pause-transfer', id),
+  resumeTransfer:     (id) => timedInvoke('resume-transfer', id),
+  terminateTransfer:  (id) => timedInvoke('terminate-transfer', id),
   onTransferStatusUpdate: (callback) => {
     const sub = (_, val) => callback(val);
     ipcRenderer.on('transfer-status-update', sub);
@@ -53,12 +91,12 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // 5. Sync Engine
-  initSync: (token) => ipcRenderer.invoke('init-sync', token),
-  stopSync: () => ipcRenderer.invoke('stop-sync'),
-  forceSync: () => ipcRenderer.invoke('force-sync'),
-  syncBucketsNow: () => ipcRenderer.invoke('sync-buckets-now'),
-  syncConfigNow: (configId) => ipcRenderer.invoke('sync-config-now', configId),
-  retryFailedSync: (syncActivityId) => ipcRenderer.invoke('retry-failed-sync', syncActivityId),
+  initSync: (token) => timedInvoke('init-sync', token),
+  stopSync: () => timedInvoke('stop-sync'),
+  forceSync: () => timedInvoke('force-sync'),
+  syncBucketsNow: () => timedInvoke('sync-buckets-now'),
+  syncConfigNow: (configId) => timedInvoke('sync-config-now', configId),
+  retryFailedSync: (syncActivityId) => timedInvoke('retry-failed-sync', syncActivityId),
   onAuthExpired: (callback) => {
     const sub = () => callback();
     ipcRenderer.on('auth-expired', sub);
@@ -71,14 +109,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   },
 
   // 6. DB Helpers
-  dbQuery: (sql, params) => ipcRenderer.invoke('db-query', { sql, params }),
-  searchFiles: (query) => ipcRenderer.invoke('search-files', { query }),
-  getSyncConfigs: () => ipcRenderer.invoke('get-sync-configs'),
-  createSyncConfig: (config) => ipcRenderer.invoke('create-sync-config', config),
-  deleteSyncConfig: (id) => ipcRenderer.invoke('delete-sync-config', id),
-  getLocalSyncActivities: (configId) => ipcRenderer.invoke('get-local-sync-activities', configId),
-  getSyncJobs: (configId) => ipcRenderer.invoke('get-sync-jobs', configId),
-  selectSyncFolder: () => ipcRenderer.invoke('select-sync-folder'),
+  dbQuery: (sql, params) => timedInvoke('db-query', { sql, params }),
+  searchFiles: (query) => timedInvoke('search-files', { query }),
+  getSyncConfigs: () => timedInvoke('get-sync-configs'),
+  createSyncConfig: (config) => timedInvoke('create-sync-config', config),
+  updateSyncConfig: (data) => timedInvoke('update-sync-config', data),
+  deleteSyncConfig: (id) => timedInvoke('delete-sync-config', id),
+  getLocalSyncActivities: (configId) => timedInvoke('get-local-sync-activities', configId),
+  getSyncJobs: (configId) => timedInvoke('get-sync-jobs', configId),
+  selectSyncFolder: () => timedInvoke('select-sync-folder'),
 
   // 7. Watcher Events
   onFileChange: (event, callback) => {
@@ -89,14 +128,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 8. Auth (Cognito IPC)
   auth: {
-    login:           (email, password)               => ipcRenderer.invoke('auth:login', { email, password }),
-    newPassword:     (username, newPassword, session) => ipcRenderer.invoke('auth:new-password', { username, newPassword, session }),
-    refresh:         ()                               => ipcRenderer.invoke('auth:refresh'),
-    logout:          ()                               => ipcRenderer.invoke('auth:logout'),
-    getSession:      ()                               => ipcRenderer.invoke('auth:get-session'),
-    forgotPassword:  (email)                          => ipcRenderer.invoke('auth:forgot-password', { email }),
-    confirmPassword: (email, code, newPassword)       => ipcRenderer.invoke('auth:confirm-password', { email, code, newPassword }),
-    openBrowserSSO:  ()                               => ipcRenderer.invoke('auth:open-browser-sso'),
+    login:           (email, password)               => timedInvoke('auth:login', { email, password }),
+    newPassword:     (username, newPassword, session) => timedInvoke('auth:new-password', { username, newPassword, session }),
+    refresh:         ()                               => timedInvoke('auth:refresh'),
+    logout:          ()                               => timedInvoke('auth:logout'),
+    getSession:      ()                               => timedInvoke('auth:get-session'),
+    forgotPassword:  (email)                          => timedInvoke('auth:forgot-password', { email }),
+    confirmPassword: (email, code, newPassword)       => timedInvoke('auth:confirm-password', { email, code, newPassword }),
+    openBrowserSSO:  ()                               => timedInvoke('auth:open-browser-sso'),
     onSSOResult: (cb) => {
       const sub = (_, data) => cb(data);
       ipcRenderer.on('sso-auth-result', sub);
@@ -106,21 +145,21 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // 9. Bot Auth
   bot: {
-    generateKeyPair: ()         => ipcRenderer.invoke('bot:generate-keypair'),
-    getPublicKey:    ()         => ipcRenderer.invoke('bot:get-public-key'),
-    saveBotId:       (botId)    => ipcRenderer.invoke('bot:save-bot-id', { botId }),
-    getBotId:        ()         => ipcRenderer.invoke('bot:get-bot-id'),
-    handshake:       (botId)    => ipcRenderer.invoke('bot:handshake', { botId }),
-    attemptAutoLogin: ()        => ipcRenderer.invoke('bot:attempt-auto-login'),
-    deregister:      ()         => ipcRenderer.invoke('bot:deregister'),
+    generateKeyPair: ()         => timedInvoke('bot:generate-keypair'),
+    getPublicKey:    ()         => timedInvoke('bot:get-public-key'),
+    saveBotId:       (botId)    => timedInvoke('bot:save-bot-id', { botId }),
+    getBotId:        ()         => timedInvoke('bot:get-bot-id'),
+    handshake:       (botId)    => timedInvoke('bot:handshake', { botId }),
+    attemptAutoLogin: ()        => timedInvoke('bot:attempt-auto-login'),
+    deregister:      ()         => timedInvoke('bot:deregister'),
   },
 
   // 10. Doctor Diagnostics
   doctor: {
-    getHeartbeatHistory:  (minutes) => ipcRenderer.invoke('doctor:get-heartbeat-history', minutes),
-    runDiagnostics:       ()        => ipcRenderer.invoke('doctor:run-diagnostics'),
-    runSingle:            (name)    => ipcRenderer.invoke('doctor:run-single', name),
-    getLastDiagnostics:   ()        => ipcRenderer.invoke('doctor:get-last-diagnostics'),
+    getHeartbeatHistory:  (minutes) => timedInvoke('doctor:get-heartbeat-history', minutes),
+    runDiagnostics:       ()        => timedInvoke('doctor:run-diagnostics'),
+    runSingle:            (name)    => timedInvoke('doctor:run-single', name),
+    getLastDiagnostics:   ()        => timedInvoke('doctor:get-last-diagnostics'),
     onDoctorProgress: (cb) => {
       const sub = (_, val) => cb(val);
       ipcRenderer.on('doctor:progress', sub);

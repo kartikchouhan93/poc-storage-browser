@@ -67,26 +67,45 @@ class UploadManager {
             const credentials = await credentialManager.getCredentials(accountId);
             const s3 = this._buildS3Client(credentials, region);
 
-            const fileStream = fs.createReadStream(filePath);
             const { PutObjectCommand } = require('@aws-sdk/client-s3');
+
+            // Pipe through a PassThrough to track upload progress
+            const { PassThrough } = require('stream');
+            const passThrough = new PassThrough();
+            const fileStream = fs.createReadStream(filePath);
+            let uploaded = 0;
+
+            // Register abort controller so terminate() can cancel the stream
+            const abortCtrl = new AbortController();
+            statusManager.registerAbortController(transferId, abortCtrl);
+
+            fileStream.on('data', (chunk) => {
+                uploaded += chunk.length;
+                if (stat.size > 0) {
+                    statusManager.updateProgress(transferId, (uploaded / stat.size) * 100, uploaded);
+                }
+            });
+            fileStream.pipe(passThrough);
 
             const cmd = new PutObjectCommand({
                 Bucket: bucketName,
                 Key: s3Key,
-                Body: fileStream,
+                Body: passThrough,
                 ContentType: contentType,
                 ContentLength: stat.size,
             });
 
-            // Simple upload — no per-chunk progress, just start/complete
-            await s3.send(cmd);
+            await s3.send(cmd, { abortSignal: abortCtrl.signal });
 
             statusManager.completeTransfer(transferId, 'done');
             await syncHistory.logActivity('UPLOAD', s3Key, 'SUCCESS', null, this.currentConfigId, this.currentSyncJobId);
         } catch (error) {
             console.error('[UploadManager] Simple upload error:', error.message);
-            statusManager.completeTransfer(transferId, 'error');
-            await syncHistory.logActivity('UPLOAD', s3Key, 'FAILED', error.message, this.currentConfigId, this.currentSyncJobId);
+            const finalStatus = error.message === 'Transfer terminated by user' ? 'terminated' : 'error';
+            statusManager.completeTransfer(transferId, finalStatus);
+            if (finalStatus !== 'terminated') {
+                await syncHistory.logActivity('UPLOAD', s3Key, 'FAILED', error.message, this.currentConfigId, this.currentSyncJobId);
+            }
             throw error;
         }
     }
@@ -99,7 +118,6 @@ class UploadManager {
     async _uploadMultipart(bucketId, accountId, filePath, bucketName, s3Key, contentType, stat, region, credentialManager, authManager) {
         const fileName = path.basename(filePath);
         const transferId = `ul-${Date.now()}-${fileName}`;
-        statusManager.startTransfer(transferId, fileName, 'upload', stat.size);
 
         // Dynamic part sizing — prevent exceeding S3's 10,000 part limit
         let partSize = PART_SIZE;
@@ -107,6 +125,8 @@ class UploadManager {
             partSize = Math.ceil(stat.size / MAX_PARTS);
         }
         const totalParts = Math.ceil(stat.size / partSize);
+
+        statusManager.startTransfer(transferId, fileName, 'upload', stat.size, totalParts);
 
         // Deterministic file hash for resumption — matches enterprise pattern
         const fileHash = Buffer.from(
@@ -158,12 +178,18 @@ class UploadManager {
             if (completedParts.length > 0) {
                 const pct = Math.round((completedParts.length / totalParts) * 100);
                 statusManager.updateProgress(transferId, pct, completedParts.length * partSize);
+                // Mark resumed chunks as already done
+                for (const p of completedParts) {
+                    statusManager.updateChunk(transferId, p.PartNumber, 'done', 100);
+                }
             }
 
             const uploadPart = async (partNumber) => {
                 const start = (partNumber - 1) * partSize;
                 const end = Math.min(start + partSize, stat.size);
                 const chunkSize = end - start;
+
+                statusManager.updateChunk(transferId, partNumber, 'active', 0);
 
                 for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
                     try {
@@ -193,20 +219,26 @@ class UploadManager {
 
                         const pct = Math.round((completedParts.length / totalParts) * 100);
                         statusManager.updateProgress(transferId, pct, completedParts.length * partSize);
+                        statusManager.updateChunk(transferId, partNumber, 'done', 100);
                         return;
 
                     } catch (err) {
                         console.warn(`[UploadManager] Part ${partNumber} attempt ${attempt}/${MAX_RETRIES} failed:`, err.message);
-                        if (attempt >= MAX_RETRIES) throw err;
+                        if (attempt >= MAX_RETRIES) {
+                            statusManager.updateChunk(transferId, partNumber, 'error', 0);
+                            throw err;
+                        }
                         await new Promise(r => setTimeout(r, 1000 * Math.pow(2, attempt)));
                     }
                 }
             };
 
-            // Upload in concurrent batches of CONCURRENCY
-            for (let i = 0; i < remainingParts.length; i += CONCURRENCY) {
-                const batch = remainingParts.slice(i, i + CONCURRENCY);
-                await Promise.all(batch.map(partNum => uploadPart(partNum)));
+            // Upload parts sequentially — one at a time for predictable progress
+            for (const partNum of remainingParts) {
+                // Honour pause / terminate between parts
+                const terminated = await statusManager.checkPauseSignal(transferId);
+                if (terminated) throw new Error('Transfer terminated by user');
+                await uploadPart(partNum);
             }
 
             // ── 4. Complete multipart upload ───────────────────────────────
@@ -228,8 +260,11 @@ class UploadManager {
 
         } catch (error) {
             console.error('[UploadManager] Multipart upload error:', error.message);
-            statusManager.completeTransfer(transferId, 'error');
-            await syncHistory.logActivity('UPLOAD', s3Key, 'FAILED', error.message, this.currentConfigId, this.currentSyncJobId);
+            const finalStatus = error.message === 'Transfer terminated by user' ? 'terminated' : 'error';
+            statusManager.completeTransfer(transferId, finalStatus);
+            if (finalStatus !== 'terminated') {
+                await syncHistory.logActivity('UPLOAD', s3Key, 'FAILED', error.message, this.currentConfigId, this.currentSyncJobId);
+            }
 
             // Abort the multipart upload to avoid orphaned parts incurring S3 storage costs
             if (uploadId) {

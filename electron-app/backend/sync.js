@@ -24,6 +24,8 @@ class SyncManager {
         this.authToken = null;
         this.isSyncing = false;
         this.onAuthExpired = null;
+        this.userId = null;
+        this.botId = null;
         /**
          * Shared reference to the Set in main.js.
          * Files added here are SKIPPED by the watcher's 'add' handler
@@ -36,14 +38,18 @@ class SyncManager {
      * @param {string} token - JWT auth token
      * @param {Function} onAuthExpired - called when 401 is received
      * @param {Set<string>} downloadingPaths - shared Set with the watcher in main.js
+     * @param {string} [userId] - user email/id for scoping history
+     * @param {string} [botId] - bot id for scoping history
      */
-    init(token, onAuthExpired, downloadingPaths) {
+    init(token, onAuthExpired, downloadingPaths, userId = null, botId = null) {
         this.authToken = token;
         this.onAuthExpired = onAuthExpired;
+        this.userId = userId;
+        this.botId = botId;
         if (downloadingPaths) this.downloadingPaths = downloadingPaths;
 
-        // Initialize the shared sync history logger with this token
-        syncHistory.init(token);
+        // Initialize the shared sync history logger with this token + identity
+        syncHistory.init(token, userId, botId);
 
         if (this.syncIntervalId) clearInterval(this.syncIntervalId);
 
@@ -64,6 +70,8 @@ class SyncManager {
         }
         syncHistory.stop();
         this.authToken = null;
+        this.userId = null;
+        this.botId = null;
         this.isSyncing = false;
         console.log('[SyncManager] Stopped');
     }
@@ -255,11 +263,16 @@ class SyncManager {
         `);
 
         // Read configs that need sync (respecting interval)
-        const configs = database.query(`
-            SELECT * FROM "SyncConfig" 
-            WHERE "isActive" = 1 AND "isSyncing" = 0 AND
-            ("lastSync" IS NULL OR "lastSync" < datetime('now', '-' || "intervalMinutes" || ' minutes'))
-        `);
+        const configQuery = this.userId
+            ? `SELECT * FROM "SyncConfig" 
+               WHERE "isActive" = 1 AND "isSyncing" = 0 AND
+               ("userId" = $1 OR "userId" IS NULL) AND
+               ("lastSync" IS NULL OR "lastSync" < datetime('now', '-' || "intervalMinutes" || ' minutes'))`
+            : `SELECT * FROM "SyncConfig" 
+               WHERE "isActive" = 1 AND "isSyncing" = 0 AND
+               ("lastSync" IS NULL OR "lastSync" < datetime('now', '-' || "intervalMinutes" || ' minutes'))`;
+        const configParams = this.userId ? [this.userId] : [];
+        const configs = database.query(configQuery, configParams);
 
         for (const config of configs.rows) {
             // Per-config lock — double-check it's still unlocked before acquiring
@@ -320,8 +333,9 @@ class SyncManager {
                         const dl = await this.syncBucketToLocal(bucketMock, map.localPath, config.id, jobId);
                         filesHandled += dl;
                     } else if (direction === 'UPLOAD') {
-                        // Upload mode: scan local → push to cloud
-                        const ul = await this.syncLocalToBucket(bucketMock, map.localPath, config.id, jobId);
+                        // Upload mode: scan local → push to cloud (zip if mapping requests it)
+                        const shouldZip = map.shouldZip === 1 || map.shouldZip === true;
+                        const ul = await this.syncLocalToBucket(bucketMock, map.localPath, config.id, jobId, shouldZip);
                         filesHandled += ul;
                     }
                 }
@@ -501,10 +515,84 @@ class SyncManager {
         return downloadCount;
     }
 
-    async syncLocalToBucket(bucket, rootFolder, configId, syncJobId = null) {
-        if (!fs.existsSync(rootFolder)) return;
+    async syncLocalToBucket(bucket, rootFolder, configId, syncJobId = null, shouldZip = false) {
+        if (!fs.existsSync(rootFolder)) return 0;
 
-        // Recursively find all files in rootFolder
+        const uploadQueue = require('./transfers/queue');
+
+        // ── ZIP MODE: zip the whole folder, upload a single .zip ─────────────
+        if (shouldZip) {
+            const os = require('os');
+            const archiver = require('archiver');
+            const folderName = path.basename(rootFolder);
+            const zipName = `${folderName}.zip`;
+            const tempZip = path.join(os.tmpdir(), `fms_sync_${Date.now()}_${zipName}`);
+
+            const statusManager = require('./transfers/status');
+            const transferId = `zip-${Date.now()}-${zipName}`;
+            statusManager.startTransfer(transferId, zipName, 'zip');
+
+            // Compute total size for progress
+            let totalBytes = 0;
+            const walkSize = async (dir) => {
+                const entries = await fsPromises.readdir(dir, { withFileTypes: true });
+                for (const e of entries) {
+                    const full = path.join(dir, e.name);
+                    if (e.isDirectory()) await walkSize(full);
+                    else { try { totalBytes += (await fsPromises.stat(full)).size; } catch {} }
+                }
+            };
+            try { await walkSize(rootFolder); } catch {}
+
+            try {
+                await new Promise((resolve, reject) => {
+                    const output = fs.createWriteStream(tempZip);
+                    const archive = archiver('zip', { zlib: { level: 6 } });
+                    let processedBytes = 0;
+
+                    archive.on('entry', (entry) => {
+                        processedBytes += entry.stats?.size || 0;
+                        if (totalBytes > 0) {
+                            const pct = Math.min(99, (processedBytes / totalBytes) * 100);
+                            statusManager.updateProgress(transferId, pct, processedBytes);
+                        }
+                    });
+
+                    output.on('close', resolve);
+                    archive.on('error', reject);
+                    archive.pipe(output);
+                    archive.directory(rootFolder, folderName);
+                    archive.finalize();
+                });
+
+                statusManager.completeTransfer(transferId, 'done');
+                console.log(`[SyncManager] Zipped "${folderName}" → ${tempZip}`);
+                await syncHistory.logActivity('ZIP', zipName, 'SUCCESS', null, configId, syncJobId);
+
+                // Check if remote zip exists and has same size — skip if unchanged
+                const remoteZip = (bucket.files || []).find(f => f.key === zipName);
+                const localZipSize = fs.statSync(tempZip).size;
+                const remoteSize = remoteZip?.size ? parseInt(remoteZip.size) : null;
+
+                if (remoteSize !== null && remoteSize === localZipSize) {
+                    console.log(`[SyncManager] Zip unchanged, skipping upload: ${zipName}`);
+                    fs.unlinkSync(tempZip);
+                    return 0;
+                }
+
+                uploadQueue.addUploadTask(bucket.id, tempZip, zipName, 'application/zip', configId, syncJobId);
+                console.log(`[SyncManager] Queued zip upload: ${zipName} → s3://${bucket.name}/${zipName}`);
+                return 1;
+
+            } catch (err) {
+                statusManager.completeTransfer(transferId, 'error');
+                console.error(`[SyncManager] Zip failed for "${folderName}":`, err.message);
+                await syncHistory.logActivity('ZIP', zipName, 'FAILED', err.message, configId, syncJobId);
+                return 0;
+            }
+        }
+
+        // ── NORMAL MODE: walk files, upload changed/missing ones ─────────────
         const walk = async (dir) => {
             let results = [];
             const list = await fsPromises.readdir(dir, { withFileTypes: true });
@@ -524,7 +612,6 @@ class SyncManager {
         const remoteFileMap = new Map(remoteFiles.map(f => [f.key, f]));
 
         let uploadCount = 0;
-        const uploadQueue = require('./transfers/queue');
 
         for (const localPath of localFiles) {
             const relativePath = path.relative(rootFolder, localPath);
@@ -534,28 +621,26 @@ class SyncManager {
 
             const remoteFile = remoteFileMap.get(s3Key);
             if (!remoteFile) {
-                shouldUpload = true; // Missing from S3 entirely
+                shouldUpload = true;
             } else {
-                // Check if local file size differs from remote file size
                 try {
                     const localStat = fs.statSync(localPath);
                     const remoteSize = remoteFile.size ? parseInt(remoteFile.size) : null;
-                    
                     if (remoteSize !== null && localStat.size !== remoteSize) {
-                        shouldUpload = true; // Size mismatch
+                        shouldUpload = true;
                     }
                 } catch(e) {}
             }
 
             if (shouldUpload) {
-                console.log(`[SyncManager] Local file missing in S3 or modified locally, queueing upload: ${s3Key}`);
+                console.log(`[SyncManager] Queueing upload: ${s3Key}`);
                 uploadQueue.addUploadTask(bucket.id, localPath, s3Key, null, configId, syncJobId);
                 uploadCount++;
             }
         }
 
         if (uploadCount > 0) {
-            console.log(`[SyncManager] Bucket "${bucket.name}": Queued ${uploadCount} missing/modified files from local folder ${rootFolder}`);
+            console.log(`[SyncManager] Bucket "${bucket.name}": Queued ${uploadCount} files from ${rootFolder}`);
         }
         return uploadCount;
     }

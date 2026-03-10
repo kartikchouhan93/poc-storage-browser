@@ -5,6 +5,9 @@ class TransferStatusManager {
         this.transfers = new Map();
         this.mainWindow = null;
         this.pendingTimeout = null;
+        // transferId -> { resolve, reject } for pause/terminate signals
+        this._pauseSignals = new Map();   // transferId -> { isPaused, resume: fn }
+        this._abortControllers = new Map(); // transferId -> AbortController
     }
 
     init(mainWindow) {
@@ -12,7 +15,7 @@ class TransferStatusManager {
         console.log(`[TransferStatusManager] Initialized with window ID: ${mainWindow?.id}`);
     }
 
-    startTransfer(id, name, type, size = 0) {
+    startTransfer(id, name, type, size = 0, totalChunks = 0) {
         console.log(`[TransferStatusManager] Starting ${type}: ${name} (${id}) - Size: ${size}`);
         const transfer = {
             id,
@@ -24,13 +27,23 @@ class TransferStatusManager {
             status: 'active',
             startTime: Date.now(),
             lastUpdate: Date.now(),
-            speed: 0
+            speed: 0,
+            // chunks: [{ index, status: 'pending'|'active'|'done'|'error', progress: 0-100 }]
+            chunks: totalChunks > 0
+                ? Array.from({ length: totalChunks }, (_, i) => ({ index: i + 1, status: 'pending', progress: 0 }))
+                : []
         };
         this.transfers.set(id, transfer);
         this.notify(true); // Immediate update for start
         return id;
     }
 
+    /**
+     * Update overall progress.
+     * @param {string} id
+     * @param {number} progress - 0-100
+     * @param {number|null} loaded - bytes loaded so far
+     */
     updateProgress(id, progress, loaded = null) {
         const transfer = this.transfers.get(id);
         if (transfer) {
@@ -45,6 +58,24 @@ class TransferStatusManager {
             
             transfer.progress = progress;
             transfer.lastUpdate = now;
+            this.notify();
+        }
+    }
+
+    /**
+     * Update a single chunk's status/progress.
+     * @param {string} id - transfer id
+     * @param {number} chunkIndex - 1-based part number
+     * @param {'pending'|'active'|'done'|'error'} status
+     * @param {number} progress - 0-100
+     */
+    updateChunk(id, chunkIndex, status, progress = 0) {
+        const transfer = this.transfers.get(id);
+        if (!transfer || !transfer.chunks.length) return;
+        const chunk = transfer.chunks.find(c => c.index === chunkIndex);
+        if (chunk) {
+            chunk.status = status;
+            chunk.progress = progress;
             this.notify();
         }
     }
@@ -66,6 +97,86 @@ class TransferStatusManager {
                 }
             }, 5000);
         }
+    }
+
+    // ── Pause / Resume / Terminate ────────────────────────────────────────────
+
+    registerAbortController(id, controller) {
+        this._abortControllers.set(id, controller);
+    }
+
+    pauseTransfer(id) {
+        const transfer = this.transfers.get(id);
+        if (!transfer || transfer.status !== 'active') return false;
+        transfer.status = 'paused';
+        transfer.speed = 0;
+        // Set pause flag — upload/download loops poll this
+        if (!this._pauseSignals.has(id)) this._pauseSignals.set(id, { isPaused: true, _waiters: [] });
+        else this._pauseSignals.get(id).isPaused = true;
+        this.notify(true);
+        return true;
+    }
+
+    resumeTransfer(id) {
+        const transfer = this.transfers.get(id);
+        if (!transfer || transfer.status !== 'paused') return false;
+        transfer.status = 'active';
+        const sig = this._pauseSignals.get(id);
+        if (sig) {
+            sig.isPaused = false;
+            // Wake all waiters
+            for (const resolve of sig._waiters) resolve();
+            sig._waiters = [];
+        }
+        this.notify(true);
+        return true;
+    }
+
+    terminateTransfer(id) {
+        const transfer = this.transfers.get(id);
+        if (!transfer) return false;
+        // Wake any paused waiters so the loop can exit
+        const sig = this._pauseSignals.get(id);
+        if (sig) {
+            sig.isPaused = false;
+            sig.terminated = true;
+            for (const resolve of sig._waiters) resolve();
+            sig._waiters = [];
+        }
+        // Signal abort controller if present
+        const ctrl = this._abortControllers.get(id);
+        if (ctrl) ctrl.abort();
+        transfer.status = 'terminated';
+        transfer.speed = 0;
+        this.notify(true);
+        // Clean up after a short delay
+        setTimeout(() => {
+            this.transfers.delete(id);
+            this._pauseSignals.delete(id);
+            this._abortControllers.delete(id);
+            this.notify();
+        }, 3000);
+        return true;
+    }
+
+    /** Call this inside upload/download loops to honour pause/terminate. 
+     *  Returns true if the transfer was terminated (caller should throw/return). */
+    async checkPauseSignal(id) {
+        const sig = this._pauseSignals.get(id);
+        if (!sig) return false;
+        if (sig.terminated) return true;
+        if (sig.isPaused) {
+            await new Promise(resolve => sig._waiters.push(resolve));
+        }
+        return sig.terminated || false;
+    }
+
+    isPaused(id) {
+        return this._pauseSignals.get(id)?.isPaused === true;
+    }
+
+    isTerminated(id) {
+        return this._pauseSignals.get(id)?.terminated === true;
     }
 
     getTransfers() {

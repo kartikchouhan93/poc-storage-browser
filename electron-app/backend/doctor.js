@@ -66,6 +66,22 @@ class DoctorManager {
 
     await this._persistDiagnostics(diagnostics);
     this._emit({ type: 'all-complete', diagnostics });
+
+    // Persist each diagnostic result to LocalSyncActivity so it appears in Recent Activities
+    try {
+      const syncHistory = require('./syncHistory');
+      for (const d of diagnostics) {
+        await syncHistory.logActivity(
+          'DIAGNOSTIC',
+          d.name,
+          d.status === 'pass' ? 'SUCCESS' : 'FAILED',
+          d.status !== 'pass' ? (d.detail || null) : null
+        );
+      }
+    } catch (e) {
+      console.warn('[Doctor] Failed to log diagnostics to activity log:', e.message);
+    }
+
     return diagnostics;
   }
 

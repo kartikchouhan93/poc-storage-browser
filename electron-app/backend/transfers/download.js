@@ -12,34 +12,63 @@ class DownloadManager {
     async downloadFromS3(s3Client, bucketName, s3Key, localPath, totalSize = 0) {
         const fileName = path.basename(s3Key);
         const transferId = `dl-${Date.now()}-${fileName}`;
+
+        // Synthesize virtual chunks for progress display (1 chunk per ~20MB, min 1)
+        const CHUNK_SIZE = 20 * 1024 * 1024;
+        const totalChunks = totalSize > 0 ? Math.max(1, Math.ceil(totalSize / CHUNK_SIZE)) : 0;
         
-        statusManager.startTransfer(transferId, fileName, 'download', totalSize);
+        statusManager.startTransfer(transferId, fileName, 'download', totalSize, totalChunks);
+
+        const abortCtrl = new AbortController();
+        statusManager.registerAbortController(transferId, abortCtrl);
 
         try {
-            const data = await s3Client.send(new GetObjectCommand({ Bucket: bucketName, Key: s3Key }));
+            const data = await s3Client.send(
+                new GetObjectCommand({ Bucket: bucketName, Key: s3Key }),
+                { abortSignal: abortCtrl.signal }
+            );
             let downloaded = 0;
-            
+
             const progressPassThrough = new (require('stream').PassThrough)();
-            progressPassThrough.on('data', (chunk) => {
+            progressPassThrough.on('data', async (chunk) => {
                 downloaded += chunk.length;
                 if (totalSize > 0) {
                     const progress = (downloaded / totalSize) * 100;
                     statusManager.updateProgress(transferId, progress, downloaded);
+
+                    if (totalChunks > 0) {
+                        const currentChunkIndex = Math.min(totalChunks, Math.floor(downloaded / CHUNK_SIZE) + 1);
+                        for (let i = 1; i < currentChunkIndex; i++) {
+                            statusManager.updateChunk(transferId, i, 'done', 100);
+                        }
+                        const chunkStart = (currentChunkIndex - 1) * CHUNK_SIZE;
+                        const chunkProgress = Math.min(100, ((downloaded - chunkStart) / CHUNK_SIZE) * 100);
+                        statusManager.updateChunk(transferId, currentChunkIndex, 'active', chunkProgress);
+                    }
+                }
+                // Pause support — cork the stream while paused
+                if (statusManager.isPaused(transferId)) {
+                    progressPassThrough.pause();
+                    await statusManager.checkPauseSignal(transferId);
+                    progressPassThrough.resume();
                 }
             });
 
             await pipeline(
                 data.Body,
                 progressPassThrough,
-                fs.createWriteStream(localPath)
+                fs.createWriteStream(localPath),
+                { signal: abortCtrl.signal }
             );
-            
+
             statusManager.completeTransfer(transferId, 'done');
             return true;
         } catch (error) {
-            console.error('[DownloadManager] S3 Error:', error);
-            statusManager.completeTransfer(transferId, 'error');
-            throw error;
+            const isTerminated = statusManager.isTerminated(transferId);
+            console.error('[DownloadManager] S3 Error:', isTerminated ? 'terminated by user' : error.message);
+            statusManager.completeTransfer(transferId, isTerminated ? 'terminated' : 'error');
+            if (!isTerminated) throw error;
+            return false;
         }
     }
 

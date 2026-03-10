@@ -6,7 +6,7 @@ import {
 } from '../components/ui/table';
 import {
   CheckCircle2, XCircle, Clock,
-  Download, Upload, History, RefreshCw, Activity, RotateCcw
+  Download, Upload, History, RefreshCw, Activity, RotateCcw, Stethoscope
 } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -17,6 +17,8 @@ export default function RecentActivitiesPage() {
     const [search, setSearch] = useState('');
     const [activeTransfers, setActiveTransfers] = useState([]);
     const [retryingId, setRetryingId] = useState(null);
+    // diagnostics: { name, status, steps[], startedAt }[]
+    const [diagnosticRuns, setDiagnosticRuns] = useState([]);
 
     const fetchLocalActivities = async () => {
         try {
@@ -71,6 +73,40 @@ export default function RecentActivitiesPage() {
         return cleanup;
     }, []);
 
+    // Doctor diagnostics subscription
+    useEffect(() => {
+        if (!window.electronAPI?.doctor?.onDoctorProgress) return;
+        const cleanup = window.electronAPI.doctor.onDoctorProgress((event) => {
+            if (event.type === 'start') {
+                setDiagnosticRuns(prev => [{
+                    name: event.diagnostic,
+                    status: 'running',
+                    steps: [],
+                    startedAt: new Date(),
+                }, ...prev].slice(0, 20));
+            } else if (event.type === 'step') {
+                setDiagnosticRuns(prev => prev.map(r =>
+                    r.name === event.diagnostic && r.status === 'running'
+                        ? { ...r, steps: event.steps }
+                        : r
+                ));
+            } else if (event.type === 'all-complete') {
+                // Merge final statuses from the completed batch
+                setDiagnosticRuns(prev => {
+                    const updated = [...prev];
+                    (event.diagnostics || []).forEach(d => {
+                        const idx = updated.findIndex(r => r.name === d.name && r.status === 'running');
+                        if (idx !== -1) {
+                            updated[idx] = { ...updated[idx], status: d.status, steps: d.steps || updated[idx].steps };
+                        }
+                    });
+                    return updated;
+                });
+            }
+        });
+        return cleanup;
+    }, []);
+
     const handleRetry = async (activityId) => {
         if (!window.electronAPI?.retryFailedSync) return;
         setRetryingId(activityId);
@@ -89,9 +125,10 @@ export default function RecentActivitiesPage() {
     const formatDate = (dateString) => {
         if (!dateString) return '--';
         const d = new Date(dateString);
-        return d.toLocaleString('en-US', {
+        return d.toLocaleString('en-IN', {
             month: 'short', day: 'numeric',
             hour: '2-digit', minute: '2-digit', second: '2-digit',
+            timeZone: 'Asia/Kolkata',
         });
     };
 
@@ -108,10 +145,14 @@ export default function RecentActivitiesPage() {
         else if (action === 'UPLOAD') colorClasses = 'bg-amber-50 text-amber-700';
         else if (action === 'DOWNLOAD') colorClasses = 'bg-emerald-50 text-emerald-700';
         else if (action === 'DELETE') colorClasses = 'bg-red-50 text-red-600';
+        else if (action === 'ZIP') colorClasses = 'bg-violet-50 text-violet-700';
+        else if (action === 'DIAGNOSTIC') colorClasses = 'bg-indigo-50 text-indigo-700';
         return (
             <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] font-bold tracking-wide uppercase ${colorClasses}`}>
                 {action === 'UPLOAD' && <Upload className="h-2.5 w-2.5" />}
                 {action === 'DOWNLOAD' && <Download className="h-2.5 w-2.5" />}
+                {action === 'ZIP' && <span>📦</span>}
+                {action === 'DIAGNOSTIC' && <Stethoscope className="h-2.5 w-2.5" />}
                 {action}
             </span>
         );
@@ -172,6 +213,43 @@ export default function RecentActivitiesPage() {
                                 className="h-full bg-white/80 rounded-full transition-all duration-500"
                                 style={{ width: `${globalProgress.totalBytes > 0 ? Math.min(100, (globalProgress.transferredBytes / globalProgress.totalBytes) * 100) : 0}%` }}
                             />
+                        </div>
+                    </div>
+                )}
+
+                {/* Diagnostics Live Feed — only shown while a run is in progress */}
+                {diagnosticRuns.some(r => r.status === 'running') && (
+                    <div className="space-y-2">
+                        <div className="flex items-center gap-2 text-sm font-bold text-slate-700 px-1">
+                            <Stethoscope className="h-4 w-4 text-indigo-500" />
+                            Diagnostics Running
+                        </div>
+                        <div className="rounded-lg border bg-white shadow-sm overflow-hidden divide-y divide-slate-100">
+                            {diagnosticRuns.filter(r => r.status === 'running').map((run, i) => (
+                                <div key={i} className="px-4 py-3 flex items-start gap-3">
+                                    <RefreshCw className="h-4 w-4 text-blue-500 animate-spin mt-0.5 shrink-0" />
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-sm font-semibold text-slate-800">{run.name}</span>
+                                            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase tracking-wide bg-blue-50 text-blue-600">Running...</span>
+                                        </div>
+                                        {run.steps.length > 0 && (
+                                            <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                                {run.steps.map((s, si) => (
+                                                    <span key={si} className={`inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-medium ${
+                                                        s.status === 'pass' ? 'bg-emerald-50 text-emerald-700'
+                                                        : s.status === 'fail' ? 'bg-rose-50 text-rose-600'
+                                                        : 'bg-slate-100 text-slate-500'
+                                                    }`}>
+                                                        {s.status === 'pass' ? '✓' : s.status === 'fail' ? '✗' : '·'} {s.label}
+                                                        {s.ms > 0 && <span className="opacity-60"> {s.ms}ms</span>}
+                                                    </span>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                </div>
+                            ))}
                         </div>
                     </div>
                 )}

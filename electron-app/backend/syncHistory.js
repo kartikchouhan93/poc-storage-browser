@@ -25,19 +25,25 @@ class SyncHistoryLogger {
     constructor() {
         this.authToken = null;
         this.mainWindow = null;
+        this.userId = null;
+        this.botId = null;
     }
 
     initUI(mainWindow) {
         this.mainWindow = mainWindow;
     }
 
-    init(token) {
+    init(token, userId = null, botId = null) {
         this.authToken = token;
-        console.log('[SyncHistory] Logger initialized');
+        this.userId = userId;
+        this.botId = botId;
+        console.log('[SyncHistory] Logger initialized for userId:', userId, 'botId:', botId);
     }
 
     stop() {
         this.authToken = null;
+        this.userId = null;
+        this.botId = null;
     }
 
     /**
@@ -54,33 +60,41 @@ class SyncHistoryLogger {
 
         const id = uuidv4();
         try {
-            // Dedup: don't insert if same file+action+status was logged in the last 30 minutes
-            let dedupQuery = `SELECT id FROM "LocalSyncActivity"
-                 WHERE action = $1 AND "fileName" = $2 AND status = $3
-                   AND "createdAt" > datetime('now', '-30 minutes')`;
-            let params = [action, fileName, status];
-            if (configId) {
-                dedupQuery += ` AND "configId" = $4`;
-                params.push(configId);
-            }
-            dedupQuery += ` LIMIT 1`;
+            // ZIP and DIAGNOSTIC activities always log — they are meaningful per-run events
+            if (action !== 'ZIP' && action !== 'DIAGNOSTIC') {
+                // Dedup: don't insert if same file+action+status was logged in the last 30 minutes
+                let dedupQuery = `SELECT id FROM "LocalSyncActivity"
+                     WHERE action = $1 AND "fileName" = $2 AND status = $3
+                       AND "createdAt" > datetime('now', '-30 minutes')`;
+                let params = [action, fileName, status];
+                if (configId) {
+                    dedupQuery += ` AND "configId" = $4`;
+                    params.push(configId);
+                }
+                if (this.userId) {
+                    dedupQuery += ` AND "userId" = $${params.length + 1}`;
+                    params.push(this.userId);
+                }
+                dedupQuery += ` LIMIT 1`;
 
-            const recent = await database.query(dedupQuery, params);
-            if (recent.rows.length > 0) {
-                console.log(`[SyncHistory] Dedup skipped: ${action} ${fileName} → ${status}`);
-                return;
+                const recent = await database.query(dedupQuery, params);
+                if (recent.rows.length > 0) {
+                    console.log(`[SyncHistory] Dedup skipped: ${action} ${fileName} → ${status}`);
+                    return;
+                }
             }
 
             await database.query(
-                `INSERT INTO "LocalSyncActivity" (id, action, "fileName", status, error, synced, "configId", "syncJobId")
-                 VALUES ($1, $2, $3, $4, $5, 0, $6, $7)`,
-                [id, action, fileName, status, error, configId, syncJobId]
+                `INSERT INTO "LocalSyncActivity" (id, action, "fileName", status, error, synced, "configId", "syncJobId", "userId", "botId")
+                 VALUES ($1, $2, $3, $4, $5, 0, $6, $7, $8, $9)`,
+                [id, action, fileName, status, error, configId, syncJobId, this.userId, this.botId]
             );
             console.log(`[SyncHistory] Local log: ${action} ${fileName} → ${status}`);
             
             if (this.mainWindow && !this.mainWindow.isDestroyed()) {
                 this.mainWindow.webContents.send('sync-activity-logged', {
-                    id, action, fileName, status, error, configId, syncJobId, createdAt: new Date()
+                    id, action, fileName, status, error, configId, syncJobId,
+                    userId: this.userId, botId: this.botId, createdAt: new Date()
                 });
             }
         } catch (err) {
@@ -101,9 +115,14 @@ class SyncHistoryLogger {
 
         let rows = [];
         try {
-            const result = await database.query(
-                `SELECT * FROM "LocalSyncActivity" WHERE synced = 0 ORDER BY "createdAt" ASC`
-            );
+            let flushQuery = `SELECT * FROM "LocalSyncActivity" WHERE synced = 0`;
+            const flushParams = [];
+            if (this.userId) {
+                flushQuery += ` AND "userId" = $1`;
+                flushParams.push(this.userId);
+            }
+            flushQuery += ` ORDER BY "createdAt" ASC`;
+            const result = await database.query(flushQuery, flushParams);
             rows = result.rows;
         } catch (err) {
             console.error('[SyncHistory] Failed to read local activities:', err.message);
