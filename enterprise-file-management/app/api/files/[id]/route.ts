@@ -45,8 +45,16 @@ export async function DELETE(
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+      const email = payload.email as string;
+      const activeTenantId =
+        request.headers.get("x-active-tenant-id") ||
+        request.cookies.get("x-active-tenant-id")?.value;
+
       user = await prisma.user.findFirst({
-        where: { email: payload.email as string },
+        where: {
+          email,
+          ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+        },
         include: {
           policies: true,
           teams: {
@@ -55,6 +63,19 @@ export async function DELETE(
           },
         },
       });
+
+      if (!user) {
+        user = await prisma.user.findFirst({
+          where: { email },
+          include: {
+            policies: true,
+            teams: {
+              where: { isDeleted: false },
+              include: { team: { include: { policies: true } } },
+            },
+          },
+        });
+      }
     }
 
     if (!user)
@@ -216,8 +237,16 @@ export async function PATCH(
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+      const email = payload.email as string;
+      const activeTenantId =
+        request.headers.get("x-active-tenant-id") ||
+        request.cookies.get("x-active-tenant-id")?.value;
+
       user = await prisma.user.findFirst({
-        where: { email: payload.email as string },
+        where: {
+          email,
+          ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+        },
         include: {
           policies: true,
           teams: {
@@ -226,6 +255,19 @@ export async function PATCH(
           },
         },
       });
+
+      if (!user) {
+        user = await prisma.user.findFirst({
+          where: { email },
+          include: {
+            policies: true,
+            teams: {
+              where: { isDeleted: false },
+              include: { team: { include: { policies: true } } },
+            },
+          },
+        });
+      }
     }
 
     if (!user)

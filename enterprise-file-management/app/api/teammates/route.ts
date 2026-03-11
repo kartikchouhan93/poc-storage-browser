@@ -14,11 +14,24 @@ export async function GET(request: NextRequest) {
     }
 
     const email = payload.email as string;
+    const activeTenantId =
+      request.headers.get("x-active-tenant-id") ||
+      request.cookies.get("x-active-tenant-id")?.value;
 
-    const dbUser = await prisma.user.findFirst({
-      where: { email },
+    let dbUser = await prisma.user.findFirst({
+      where: {
+        email,
+        ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+      },
       select: { tenantId: true },
     });
+
+    if (!dbUser) {
+      dbUser = await prisma.user.findFirst({
+        where: { email },
+        select: { tenantId: true },
+      });
+    }
 
     if (!dbUser?.tenantId) {
       return NextResponse.json(

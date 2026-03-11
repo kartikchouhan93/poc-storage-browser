@@ -1,6 +1,6 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { getCurrentUser } from '@/lib/session';
-import { logAudit } from '@/lib/audit';
+import { NextRequest, NextResponse } from "next/server";
+import { getCurrentUser } from "@/lib/session";
+import { logAudit } from "@/lib/audit";
 
 export interface TenantAccessOptions {
   /**
@@ -36,24 +36,28 @@ export async function withTenantAccess(
   handler: (req: NextRequest, user: any) => Promise<NextResponse>,
   options?: TenantAccessOptions,
 ): Promise<NextResponse> {
+  const activeTenantId =
+    req.headers.get("x-active-tenant-id") ||
+    req.cookies.get("x-active-tenant-id")?.value;
+
   // Resolve the active user (reads cookie / JWT)
-  const user = await getCurrentUser();
+  const user = await getCurrentUser(activeTenantId);
   if (!user) {
-    return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
   // 11.3: PLATFORM_ADMIN bypasses tenant check entirely
-  if (user.role === 'PLATFORM_ADMIN') {
+  if (user.role === "PLATFORM_ADMIN") {
     return handler(req, user);
   }
 
   const url = new URL(req.url);
 
   // 11.2: Extract tenantId — query string first
-  let tenantId: string | null = url.searchParams.get('tenantId');
+  let tenantId: string | null = url.searchParams.get("tenantId");
 
   // Then request body (POST / PUT / PATCH)
-  if (!tenantId && ['POST', 'PUT', 'PATCH'].includes(req.method)) {
+  if (!tenantId && ["POST", "PUT", "PATCH"].includes(req.method)) {
     try {
       const cloned = req.clone();
       const body = await cloned.json().catch(() => null);
@@ -75,25 +79,31 @@ export async function withTenantAccess(
 
   // 11.5: No tenantId resolvable → 400
   if (!tenantId) {
-    return NextResponse.json({ error: 'tenantId is required' }, { status: 400 });
+    return NextResponse.json(
+      { error: "tenantId is required" },
+      { status: 400 },
+    );
   }
 
   // 11.4: Tenant mismatch → 403 + AuditLog security event
   if (tenantId !== user.tenantId) {
     logAudit({
       userId: user.id,
-      action: 'IP_ACCESS_DENIED' as any, // reusing closest available action; cast needed
+      action: "IP_ACCESS_DENIED" as any, // reusing closest available action; cast needed
       resource: url.pathname,
-      status: 'FAILED',
+      status: "FAILED",
       details: {
-        event: 'TENANT_ACCESS_DENIED',
+        event: "TENANT_ACCESS_DENIED",
         requestedTenantId: tenantId,
         userTenantId: user.tenantId,
         email: user.email,
         path: url.pathname,
       },
     });
-    return NextResponse.json({ error: 'Forbidden: tenant mismatch' }, { status: 403 });
+    return NextResponse.json(
+      { error: "Forbidden: tenant mismatch" },
+      { status: 403 },
+    );
   }
 
   return handler(req, user);

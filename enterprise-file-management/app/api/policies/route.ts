@@ -21,10 +21,24 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({ error: "Missing userId" }, { status: 400 });
 
   // Authz: Only Tenant Admin (of same tenant) or Platform Admin
+  const activeTenantId =
+    request.headers.get("x-active-tenant-id") ||
+    request.cookies.get("x-active-tenant-id")?.value;
+  const email = payload.email as string;
+
   // @ts-ignore
-  const requester = await prisma.user.findFirst({
-    where: { email: payload.email as string },
+  let requester = await prisma.user.findFirst({
+    where: {
+      email,
+      ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+    },
   });
+
+  if (!requester) {
+    requester = await prisma.user.findFirst({
+      where: { email },
+    });
+  }
   if (!requester)
     return NextResponse.json({ error: "User not found" }, { status: 404 });
 
@@ -64,10 +78,24 @@ export async function POST(request: NextRequest) {
   if (!payload)
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+  const activeTenantId =
+    request.headers.get("x-active-tenant-id") ||
+    request.cookies.get("x-active-tenant-id")?.value;
+  const email = payload.email as string;
+
   // @ts-ignore
-  const requester = await prisma.user.findFirst({
-    where: { email: payload.email as string },
+  let requester = await prisma.user.findFirst({
+    where: {
+      email,
+      ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+    },
   });
+
+  if (!requester) {
+    requester = await prisma.user.findFirst({
+      where: { email },
+    });
+  }
 
   const data = await request.json();
   const { userId, resourceType, resourceId, actions } = data;
@@ -138,10 +166,24 @@ export async function DELETE(request: NextRequest) {
   if (!policy)
     return NextResponse.json({ error: "Policy not found" }, { status: 404 });
 
+  const activeTenantId =
+    request.headers.get("x-active-tenant-id") ||
+    request.cookies.get("x-active-tenant-id")?.value;
+  const email = payload.email as string;
+
   // @ts-ignore
-  const requester = await prisma.user.findFirst({
-    where: { email: payload.email as string },
+  let requester = await prisma.user.findFirst({
+    where: {
+      email,
+      ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+    },
   });
+
+  if (!requester) {
+    requester = await prisma.user.findFirst({
+      where: { email },
+    });
+  }
 
   if (requester?.role === Role.PLATFORM_ADMIN) {
     // Allow

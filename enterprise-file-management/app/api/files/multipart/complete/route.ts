@@ -17,8 +17,16 @@ export async function POST(request: NextRequest) {
     if (!payload || typeof payload !== "object" || !payload.email)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const user = await prisma.user.findFirst({
-      where: { email: payload.email as string },
+    const email = payload.email as string;
+    const activeTenantId =
+      request.headers.get("x-active-tenant-id") ||
+      request.cookies.get("x-active-tenant-id")?.value;
+
+    let user = await prisma.user.findFirst({
+      where: {
+        email,
+        ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+      },
       include: {
         policies: true,
         teams: {
@@ -27,6 +35,19 @@ export async function POST(request: NextRequest) {
         },
       },
     });
+
+    if (!user) {
+      user = await prisma.user.findFirst({
+        where: { email },
+        include: {
+          policies: true,
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
+        },
+      });
+    }
 
     if (!user)
       return NextResponse.json({ error: "User not found" }, { status: 404 });

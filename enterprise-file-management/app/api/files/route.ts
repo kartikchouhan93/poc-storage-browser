@@ -20,16 +20,33 @@ export async function GET(request: NextRequest) {
         const bearerToken = req.headers.get("Authorization")?.split(" ")[1];
         const botAuth = bearerToken ? await verifyBotToken(bearerToken) : null;
 
+        const activeTenantId =
+          req.headers.get("x-active-tenant-id") ||
+          req.cookies.get("x-active-tenant-id")?.value;
+
         let user: any = middlewareUser;
         if (botAuth) {
           user = await prisma.user.findFirst({
-            where: { email: botAuth.email },
+            where: {
+              email: botAuth.email,
+              ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+            },
             include: {
               tenant: true,
               policies: true,
               teams: { include: { team: { include: { policies: true } } } },
             },
           });
+          if (!user) {
+            user = await prisma.user.findFirst({
+              where: { email: botAuth.email },
+              include: {
+                tenant: true,
+                policies: true,
+                teams: { include: { team: { include: { policies: true } } } },
+              },
+            });
+          }
         } else if (!user.policies) {
           user = await prisma.user.findUnique({
             where: { id: user.id },
@@ -162,10 +179,17 @@ export async function POST(request: NextRequest) {
         const token = req.headers.get("Authorization")?.split(" ")[1];
         const botAuth = token ? await verifyBotToken(token) : null;
 
+        const activeTenantId =
+          req.headers.get("x-active-tenant-id") ||
+          req.cookies.get("x-active-tenant-id")?.value;
+
         let user: any = middlewareUser;
         if (botAuth) {
           user = await prisma.user.findFirst({
-            where: { email: botAuth.email },
+            where: {
+              email: botAuth.email,
+              ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+            },
             include: {
               policies: true,
               teams: {
@@ -174,6 +198,18 @@ export async function POST(request: NextRequest) {
               },
             },
           });
+          if (!user) {
+            user = await prisma.user.findFirst({
+              where: { email: botAuth.email },
+              include: {
+                policies: true,
+                teams: {
+                  where: { isDeleted: false },
+                  include: { team: { include: { policies: true } } },
+                },
+              },
+            });
+          }
         } else if (!user.policies) {
           user = await prisma.user.findUnique({
             where: { id: user.id },

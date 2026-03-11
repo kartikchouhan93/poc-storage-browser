@@ -27,27 +27,46 @@ export async function POST(
     if (!payload || !payload.email)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const user = await prisma.user.findFirst({
-      where: { email: payload.email as string },
+    const activeTenantId =
+      request.headers.get("x-active-tenant-id") ||
+      request.cookies.get("x-active-tenant-id")?.value;
+    const email = payload.email as string;
+
+    let user = await prisma.user.findFirst({
+      where: {
+        email,
+        ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+      },
       select: { id: true },
     });
+
+    if (!user) {
+      user = await prisma.user.findFirst({
+        where: { email },
+        select: { id: true },
+      });
+    }
 
     if (!user) {
       return NextResponse.json({ error: "User not found" }, { status: 404 });
     }
 
     // Fetch bucket with account details
-    const bucket = await prisma.bucket.findUnique({
+    const bucket = (await prisma.bucket.findUnique({
       where: { id: bucketId },
       include: { awsAccount: true, tenant: true },
-    });
+    }))!;
+
+    if (!bucket) {
+      return NextResponse.json({ error: "Bucket not found" }, { status: 404 });
+    }
+    if (!bucket) throw new Error("Unreachable");
 
     if (
-      !bucket ||
-      (!process.env.AWS_PROFILE &&
-        !process.env.AWS_ACCESS_KEY_ID &&
-        false &&
-        !bucket.awsAccount?.roleArn)
+      !process.env.AWS_PROFILE &&
+      !process.env.AWS_ACCESS_KEY_ID &&
+      false &&
+      !bucket.awsAccount?.roleArn
     ) {
       return NextResponse.json(
         {

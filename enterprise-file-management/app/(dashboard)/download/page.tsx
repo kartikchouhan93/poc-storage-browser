@@ -116,7 +116,7 @@ export default function DownloadPage() {
 
   React.useEffect(() => {
     setDetectedOS(detectOS());
-    fetch("/assets/porter/manifest.json")
+    fetch("/api/agent/download")
       .then((r) => {
         if (!r.ok) throw new Error("Manifest not found");
         return r.json();
@@ -261,7 +261,7 @@ export default function DownloadPage() {
                     >
                       {build.available ? (
                         <a
-                          href={`/assets/porter/${build.filename}`}
+                          href={`/api/agent/download/file?file=${build.filename}`}
                           download={build.filename}
                         >
                           <Download className="h-4 w-4" />
