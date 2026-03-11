@@ -163,13 +163,15 @@ class SyncHistoryLogger {
                 timeout: 15000,
             });
 
-            if (res.status === 200 || res.status === 201) {
+        if (res.status === 200 || res.status === 201) {
                 // Mark all flushed rows as synced in local DB
                 const ids = rows.map(r => r.id);
-                await database.queryWithArrayParam(
-                    `UPDATE "LocalSyncActivity" SET synced = 1 WHERE id = ANY($1::text[])`,
-                    ids
-                );
+                
+                // Build SQLite-compatible IN clause instead of PostgreSQL ANY()
+                const placeholders = ids.map((_, i) => `$${i + 1}`).join(',');
+                const updateQuery = `UPDATE "LocalSyncActivity" SET synced = 1 WHERE id IN (${placeholders})`;
+                
+                await database.query(updateQuery, ids);
                 console.log(`[SyncHistory] Flushed ${rows.length} activities to Global DB ✓`);
             }
         } catch (err) {

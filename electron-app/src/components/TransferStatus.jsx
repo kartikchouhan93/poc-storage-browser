@@ -232,20 +232,20 @@ const TransferStatus = () => {
                   </div>
                 )}
 
-                {/* Per-chunk progress — only shown when chunks exist */}
+                {/* Per-chunk progress */}
                 {(status === 'active' || status === 'paused') && Array.isArray(transfer.chunks) && transfer.chunks.length > 1 && (
                   <div className="flex gap-0.5 w-full mt-0.5">
                     {transfer.chunks.map((chunk) => {
                       const chunkColor =
-                        chunk.status === 'done'  ? getProgressColor(type) :
-                        chunk.status === 'error' ? 'bg-rose-400' :
+                        chunk.status === 'done'   ? getProgressColor(type) :
+                        chunk.status === 'error'  ? 'bg-rose-400' :
                         chunk.status === 'active' ? getProgressColor(type) :
                         'bg-slate-200';
                       return (
                         <div
                           key={chunk.index}
                           className="relative flex-1 h-1 bg-slate-200 rounded-sm overflow-hidden"
-                          title={`Chunk ${chunk.index}: ${chunk.status} ${chunk.status === 'active' ? `(${Math.round(chunk.progress)}%)` : ''}`}
+                          title={`Part ${chunk.index}: ${chunk.status}${chunk.status === 'active' ? ` (${Math.round(chunk.progress)}%)` : ''}`}
                         >
                           <div
                             className={`absolute inset-y-0 left-0 rounded-sm transition-all duration-200 ${chunkColor} ${chunk.status === 'active' ? 'opacity-80' : ''}`}

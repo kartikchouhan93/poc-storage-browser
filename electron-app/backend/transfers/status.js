@@ -1,4 +1,5 @@
 const { ipcMain } = require('electron');
+const syncHistory = require('../syncHistory');
 
 class TransferStatusManager {
     constructor() {
@@ -114,6 +115,9 @@ class TransferStatusManager {
         if (!this._pauseSignals.has(id)) this._pauseSignals.set(id, { isPaused: true, _waiters: [] });
         else this._pauseSignals.get(id).isPaused = true;
         this.notify(true);
+        // Log to Recent Activities
+        const action = transfer.type === 'download' ? 'DOWNLOAD' : 'UPLOAD';
+        syncHistory.logActivity(action, transfer.name, 'PAUSED').catch(() => {});
         return true;
     }
 
@@ -149,6 +153,9 @@ class TransferStatusManager {
         transfer.status = 'terminated';
         transfer.speed = 0;
         this.notify(true);
+        // Log to Recent Activities
+        const action = transfer.type === 'download' ? 'DOWNLOAD' : 'UPLOAD';
+        syncHistory.logActivity(action, transfer.name, 'CANCELLED').catch(() => {});
         // Clean up after a short delay
         setTimeout(() => {
             this.transfers.delete(id);

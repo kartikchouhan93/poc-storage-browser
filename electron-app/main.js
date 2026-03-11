@@ -358,9 +358,17 @@ app.whenReady().then(async () => {
   const botId = botAuth.getBotId();
   const hasBotIdentity = botAuth.hasKeyPair() && !!botId;
 
-  if (hasBotIdentity) {
-    // Bot identity exists — re-handshake to get fresh tokens before starting heartbeat
-    console.log(`[Main] Bot identity found (${botId}), performing fresh handshake...`);
+  if (existingSession?.idToken && !authManager.isTokenExpired()) {
+    // Valid SSO session — start heartbeat with existing tokens (SSO takes priority over bot)
+    const heartbeat = require('./backend/heartbeat');
+    heartbeat.start('sso', () => {
+      if (mainWindow) mainWindow.webContents.send('auth-expired');
+    });
+    backend.healthReporter.start(ROOT_PATH);
+    console.log(`[Main] Resumed heartbeat + health reporter (mode=sso) from existing session`);
+  } else if (hasBotIdentity) {
+    // No valid SSO session — bot identity exists, re-handshake to get fresh tokens
+    console.log(`[Main] No SSO session, bot identity found (${botId}), performing fresh handshake...`);
     try {
       const result = await botAuth.performHandshake(botId);
       authManager.login({
@@ -381,14 +389,6 @@ app.whenReady().then(async () => {
       console.error(`[Main] Bot re-handshake failed on startup:`, err.message);
       // Fall through — renderer will handle login
     }
-  } else if (existingSession?.idToken) {
-    // SSO session — start heartbeat with existing tokens (will refresh if needed)
-    const heartbeat = require('./backend/heartbeat');
-    heartbeat.start('sso', () => {
-      if (mainWindow) mainWindow.webContents.send('auth-expired');
-    });
-    backend.healthReporter.start(ROOT_PATH);
-    console.log(`[Main] Resumed heartbeat + health reporter (mode=sso) from existing session`);
   }
 });
 

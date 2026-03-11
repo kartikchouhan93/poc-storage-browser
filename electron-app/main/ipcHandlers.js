@@ -89,6 +89,48 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
     return backend.status.terminateTransfer(transferId);
   });
 
+  ipcMain.handle("get-incomplete-transfers", () => {
+    try {
+      const transferState = require("../backend/transfers/transferState");
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+      return transferState.getIncompleteTransfers(userId);
+    } catch (err) {
+      console.error("[IPC] get-incomplete-transfers error:", err.message);
+      return [];
+    }
+  });
+
+  ipcMain.handle("retry-transfer", async (_, transferId) => {
+    try {
+      const transferState = require("../backend/transfers/transferState");
+      const state = transferState.getTransferState(transferId);
+      if (!state) return { success: false, error: "Transfer not found" };
+
+      if (state.type === "upload") {
+        backend.queue.addUploadTask(
+          state.bucketId,
+          state.localPath,
+          state.s3Key,
+          state.mimeType,
+          state.configId,
+          state.syncJobId
+        );
+      } else if (state.type === "download") {
+        await backend.download.downloadWithBucketId(
+          state.bucketId,
+          state.s3Key,
+          state.localPath,
+          state.totalSize
+        );
+      }
+      return { success: true };
+    } catch (err) {
+      console.error("[IPC] retry-transfer error:", err.message);
+      return { success: false, error: err.message };
+    }
+  });
+
   // 4. Database (accepts both { sql, params } from preload and legacy { text, params })
   ipcMain.handle("db-query", async (event, args) => {
     try {
@@ -101,12 +143,29 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   });
 
   // 5. Sync
-  ipcMain.handle("init-sync", (event, token) => {
+  ipcMain.handle("init-sync", async (event, token) => {
     const session = authManager.getSession();
     const userId = session?.email || session?.username || null;
     const botId = botAuth.getBotId() || null;
-    backend.sync.init(
-      token,
+
+    // The /api/agent/sync endpoint requires a bot-issued token.
+    // If a bot identity exists, get a bot token for sync WITHOUT overwriting
+    // the SSO user's session in the auth store.
+    let syncToken = token;
+    if (botId && botAuth.hasKeyPair()) {
+      try {
+        const result = await botAuth.performHandshake(botId);
+        if (result?.accessToken) {
+          syncToken = result.accessToken;
+          console.log('[IPC] init-sync: obtained bot token for sync API (SSO session preserved)');
+        }
+      } catch (err) {
+        console.warn('[IPC] init-sync: bot handshake failed, using SSO token:', err.message);
+      }
+    }
+
+    const wasInitialized = backend.sync.init(
+      syncToken,
       () => {
         if (mainWindow) mainWindow.webContents.send("auth-expired");
       },
@@ -114,6 +173,16 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
       userId,
       botId,
     );
+
+    // Only resume transfers on first init, not on duplicate calls
+    if (wasInitialized) {
+      setTimeout(() => {
+        backend.queue.loadIncompleteTransfers().catch(e =>
+          console.warn("[IPC] loadIncompleteTransfers failed:", e.message)
+        );
+      }, 2000);
+    }
+
     return true;
   });
 
@@ -123,6 +192,12 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   });
 
   ipcMain.handle("force-sync", () => {
+    // Ensure userId is current before forcing a sync cycle
+    const session = authManager.getSession();
+    const userId = session?.email || session?.username || null;
+    if (userId && backend.sync.userId !== userId) {
+      backend.sync.userId = userId;
+    }
     backend.sync.runSync();
     return true;
   });
@@ -130,9 +205,41 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   // Awaitable initial bucket sync — called after login to populate local DB before UI needs it
   ipcMain.handle("sync-buckets-now", async () => {
     try {
+      // Ensure SyncManager has the current userId from the active session
+      // (guards against race where syncBucketsNow fires before initSync completes)
+      const session = authManager.getSession();
+      const _uid = session?.email || session?.username || null;
+      if (_uid && backend.sync.userId !== _uid) {
+        console.log(`[IPC] sync-buckets-now: patching stale userId (${backend.sync.userId}) → ${_uid}`);
+        backend.sync.userId = _uid;
+      }
+
+      // Fix orphaned rows from previous syncs where userId was NULL
+      if (_uid) {
+        const orphaned = backend.db.query('SELECT COUNT(*) as count FROM "Bucket" WHERE "userId" IS NULL');
+        const orphanCount = parseInt(orphaned.rows[0]?.count || 0);
+        if (orphanCount > 0) {
+          console.log(`[IPC] sync-buckets-now: adopting ${orphanCount} orphaned buckets for user ${_uid}`);
+          backend.db.query('UPDATE "Bucket" SET "userId" = $1 WHERE "userId" IS NULL', [_uid]);
+          backend.db.query('UPDATE "FileObject" SET "userId" = $1 WHERE "userId" IS NULL', [_uid]);
+          backend.db.query('UPDATE "Tenant" SET "userId" = $1 WHERE "userId" IS NULL', [_uid]);
+          backend.db.query('UPDATE "Account" SET "userId" = $1 WHERE "userId" IS NULL', [_uid]);
+        }
+      }
+
+      // Clear incremental sync marker so syncAll does a FULL fetch (not incremental).
+      // This ensures we always get the complete bucket list from the server.
+      const kvKey = _uid ? `lastFullSyncAt:${_uid}` : 'lastFullSyncAt';
+      try {
+        backend.db.query('DELETE FROM "KVStore" WHERE key = $1', [kvKey]);
+      } catch (e) { /* KVStore may not exist yet */ }
+
       await backend.sync.syncAll();
       const bucketCount = await backend.db.query(
-        'SELECT COUNT(*) as count FROM "Bucket"',
+        _uid
+          ? 'SELECT COUNT(*) as count FROM "Bucket" WHERE "userId" = $1'
+          : 'SELECT COUNT(*) as count FROM "Bucket"',
+        _uid ? [_uid] : [],
       );
       const count = parseInt(bucketCount.rows[0]?.count || 0);
       console.log(
@@ -176,15 +283,24 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   ipcMain.handle("search-files", async (event, { query }) => {
     if (!query || query.trim().length < 1) return [];
     try {
-      const result = await backend.db.query(
-        `SELECT fo.id, fo.name, fo.key, fo."isFolder", fo.size, fo."mimeType", fo."bucketId", b.name AS "bucketName"
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+      
+      let sql = `SELECT fo.id, fo.name, fo.key, fo."isFolder", fo.size, fo."mimeType", fo."bucketId", b.name AS "bucketName"
                  FROM "FileObject" fo
                  JOIN "Bucket" b ON fo."bucketId" = b.id
-                 WHERE fo.name LIKE $1
-                 ORDER BY fo."isFolder" DESC, fo.name ASC
-                 LIMIT 30`,
-        [`%${query.trim()}%`],
-      );
+                 WHERE fo.name LIKE $1`;
+      const params = [`%${query.trim()}%`];
+      
+      // Scope to current user
+      if (userId) {
+        sql += ` AND fo."userId" = $2`;
+        params.push(userId);
+      }
+      
+      sql += ` ORDER BY fo."isFolder" DESC, fo.name ASC LIMIT 30`;
+      
+      const result = await backend.db.query(sql, params);
       return result.rows;
     } catch (err) {
       console.error("[IPC] search-files error:", err.message);
@@ -195,21 +311,26 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   // 7. Read local sync activities directly from local DB
   ipcMain.handle("get-local-sync-activities", async (event, configId) => {
     try {
-      let query = `SELECT * FROM "LocalSyncActivity"`;
-      let params = [];
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+
+      let sql = `SELECT * FROM "LocalSyncActivity"`;
+      const params = [];
       const conditions = [];
-      
-      // If configId is specified, filter to that config only
+
+      // Scope to current user; include NULL userId rows for backward compat
+      if (userId) {
+        conditions.push(`("userId" = $${params.length + 1} OR "userId" IS NULL)`);
+        params.push(userId);
+      }
       if (configId) {
         conditions.push(`"configId" = $${params.length + 1}`);
         params.push(configId);
       }
-      // If no configId (Recent Activities page), include all activities
-      // This ensures diagnostics (which have configId=null) are always visible
-      
-      if (conditions.length > 0) query += ` WHERE ` + conditions.join(' AND ');
-      query += ` ORDER BY "createdAt" DESC LIMIT 200`;
-      const result = await backend.db.query(query, params);
+
+      if (conditions.length > 0) sql += ` WHERE ` + conditions.join(' AND ');
+      sql += ` ORDER BY "createdAt" DESC LIMIT 200`;
+      const result = await backend.db.query(sql, params);
       return result.rows;
     } catch (err) {
       console.error("[IPC] get-local-sync-activities error:", err.message);
@@ -432,10 +553,18 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
 
   ipcMain.handle("auth:logout", () => {
     try {
-      backend.db.wipeAllData();
+      // Scope-aware logout: preserve user data in DB, just clear the session
+      // Data is keyed by userId so it persists for when the user logs back in
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+      if (userId) {
+        console.log(`[IPC] auth:logout — preserving data for user: ${userId}`);
+      }
     } catch (e) {
-      console.error("[IPC] wipe on logout failed:", e.message);
+      console.error("[IPC] logout session read failed:", e.message);
     }
+    // Stop sync engine before clearing auth
+    try { backend.sync.stop(); } catch {}
     authManager.logout();
     return { success: true };
   });
@@ -638,30 +767,40 @@ function registerIpcHandlers(mainWindow, rootPath, downloadingPaths) {
   ipcMain.handle(
     "doctor:get-heartbeat-history",
     async (event, minutes = 60) => {
-      return await backend.heartbeat.getHeartbeatHistory(minutes);
+      const session = authManager.getSession();
+      const userId = session?.email || session?.username || null;
+      return await backend.heartbeat.getHeartbeatHistory(minutes, userId);
     },
   );
 
   ipcMain.handle("doctor:run-diagnostics", async () => {
-    return await backend.doctor.runAll(rootPath);
+    const session = authManager.getSession();
+    const userId = session?.email || session?.username || null;
+    return await backend.doctor.runAll(rootPath, userId);
   });
 
   ipcMain.handle("doctor:get-last-diagnostics", async () => {
-    return await backend.doctor.getLastDiagnostics();
+    const session = authManager.getSession();
+    const userId = session?.email || session?.username || null;
+    return await backend.doctor.getLastDiagnostics(userId);
   });
 
   ipcMain.handle("doctor:run-single", async (event, diagnosticName) => {
+    const session = authManager.getSession();
+    const userId = session?.email || session?.username || null;
+    
     const methodMap = {
       "Clock Skew": () => backend.doctor.checkClockSkew(),
       "Disk I/O": () => backend.doctor.checkDiskIO(rootPath),
       "Multipart Handshake": async () => {
-        const bucket = await backend.doctor._getFirstBucket();
+        const bucket = await backend.doctor._getFirstBucket(userId);
         return bucket
           ? backend.doctor.checkMultipartHandshake(bucket.id)
           : backend.doctor._skipMultipart();
       },
       "Proxy Detection": () => backend.doctor.checkProxyDetection(),
       "Service Health": () => backend.doctor.checkServiceHealth(),
+      "Route Trace": () => backend.doctor.checkRouteTrace(),
     };
     const method = methodMap[diagnosticName];
     return method

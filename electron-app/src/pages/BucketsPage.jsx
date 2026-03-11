@@ -41,25 +41,35 @@ export default function BucketsPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [syncing, setSyncing] = useState(null);
 
-  const fetchBuckets = async () => {
-    setLoading(true);
+  const loadBucketsFromDB = async () => {
     try {
-      if (!window.electronAPI) { setBuckets([]); setLoading(false); return; }
+      if (!window.electronAPI) { setBuckets([]); return; }
 
-      // Fetch buckets
+      const session = await window.electronAPI.auth?.getSession?.();
+      const userId = session?.email || session?.username || null;
+
       const { rows: bucketRows } = await window.electronAPI.dbQuery(
-        'SELECT * FROM "Bucket" ORDER BY "createdAt" DESC', []
+        userId
+          ? 'SELECT * FROM "Bucket" WHERE "userId" = $1 ORDER BY "createdAt" DESC'
+          : 'SELECT * FROM "Bucket" ORDER BY "createdAt" DESC',
+        userId ? [userId] : []
       );
       setBuckets(bucketRows || []);
 
-      // Fetch per-bucket file counts and total sizes
       const statsRes = await window.electronAPI.dbQuery(
-        `SELECT "bucketId",
+        userId
+          ? `SELECT "bucketId",
+                SUM(CASE WHEN "isFolder" = 0 THEN 1 ELSE 0 END) as file_count,
+                COALESCE(SUM(CASE WHEN "isFolder" = 0 THEN size ELSE 0 END), 0) as total_size
+         FROM "FileObject"
+         WHERE "userId" = $1
+         GROUP BY "bucketId"`
+          : `SELECT "bucketId",
                 SUM(CASE WHEN "isFolder" = 0 THEN 1 ELSE 0 END) as file_count,
                 COALESCE(SUM(CASE WHEN "isFolder" = 0 THEN size ELSE 0 END), 0) as total_size
          FROM "FileObject"
          GROUP BY "bucketId"`,
-        []
+        userId ? [userId] : []
       );
 
       const statsMap = {};
@@ -70,6 +80,24 @@ export default function BucketsPage() {
         };
       }
       setBucketStats(statsMap);
+    } catch (error) {
+      console.error('Failed to fetch buckets from DB:', error);
+    }
+  };
+
+  const fetchBuckets = async () => {
+    setLoading(true);
+    try {
+      if (!window.electronAPI) { setBuckets([]); setLoading(false); return; }
+
+      // Trigger a remote sync first so local DB is up-to-date
+      try {
+        await window.electronAPI.syncBucketsNow?.();
+      } catch (syncErr) {
+        console.warn('[BucketsPage] Remote sync failed, showing cached data:', syncErr);
+      }
+
+      await loadBucketsFromDB();
     } catch (error) {
       console.error('Failed to fetch buckets:', error);
     } finally {
@@ -93,8 +121,8 @@ export default function BucketsPage() {
   };
 
   useEffect(() => {
-    fetchBuckets();
-    const interval = setInterval(fetchBuckets, 10000);
+    fetchBuckets(); // initial load — syncs from remote then reads DB
+    const interval = setInterval(loadBucketsFromDB, 10000); // periodic — DB only
     return () => clearInterval(interval);
   }, []);
 

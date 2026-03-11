@@ -42,6 +42,18 @@ class SyncManager {
      * @param {string} [botId] - bot id for scoping history
      */
     init(token, onAuthExpired, downloadingPaths, userId = null, botId = null) {
+        // Prevent duplicate init with the same token — avoids stacking intervals
+        if (this.syncIntervalId && this.authToken === token && this.userId === userId) {
+            console.log('[SyncManager] Already initialized with same token/user — skipping duplicate init');
+            return false;
+        }
+
+        // Stop previous cycle first
+        if (this.syncIntervalId) {
+            clearInterval(this.syncIntervalId);
+            this.syncIntervalId = null;
+        }
+
         this.authToken = token;
         this.onAuthExpired = onAuthExpired;
         this.userId = userId;
@@ -51,11 +63,10 @@ class SyncManager {
         // Initialize the shared sync history logger with this token + identity
         syncHistory.init(token, userId, botId);
 
-        if (this.syncIntervalId) clearInterval(this.syncIntervalId);
-
         this.runSync(); // Immediate first sync
         this.syncIntervalId = setInterval(() => this.runSync(), 60000); // check every 1 min
         console.log('[SyncManager] Started config-based sync 1min clock');
+        return true;
     }
 
     reloadConfigs() {
@@ -105,11 +116,32 @@ class SyncManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     async syncAll() {
-        // Build incremental sync param — pass lastSyncedAt if we have one
+        // Always use the freshest token from the auth store in case it was
+        // refreshed since init() was called (e.g. proactive Cognito refresh).
+        try {
+            const authManager = require('./auth');
+            const freshToken = authManager.getToken();
+            if (freshToken && freshToken !== this.authToken) {
+                console.log('[SyncManager] Refreshed auth token from store');
+                this.authToken = freshToken;
+            }
+            const session = authManager.getSession();
+            const freshUserId = session?.email || session?.username || null;
+            if (freshUserId && freshUserId !== this.userId) {
+                console.log(`[SyncManager] Refreshed userId: ${this.userId} → ${freshUserId}`);
+                this.userId = freshUserId;
+            }
+        } catch (err) {
+            console.warn('[SyncManager] Could not refresh token from auth store:', err.message);
+        }
+
+        // Build incremental sync param — use user-scoped KVStore key
+        const kvKey = this.userId ? `lastFullSyncAt:${this.userId}` : 'lastFullSyncAt';
         let lastSyncRow = { rows: [] };
         try {
             lastSyncRow = database.query(
-                `SELECT value FROM "KVStore" WHERE key = 'lastFullSyncAt' LIMIT 1`
+                `SELECT value FROM "KVStore" WHERE key = $1 LIMIT 1`,
+                [kvKey]
             );
         } catch (err) {
             console.warn('[SyncManager] Could not fetch lastFullSyncAt:', err.message);
@@ -125,84 +157,84 @@ class SyncManager {
 
         console.log(`[SyncManager] syncAll response — tenants: ${(tenants||[]).length}, accounts: ${(accounts||[]).length}, buckets: ${(buckets||[]).length}, syncedAt: ${syncedAt}`);
 
-        // 1. Sync Tenants into local DB
+        // 1. Sync Tenants into local DB (scoped to current user)
         for (const tenant of (tenants || [])) {
             try {
                 database.query(`
-                    INSERT INTO "Tenant" (id, name, "updatedAt")
-                    VALUES ($1, $2, $3)
+                    INSERT INTO "Tenant" (id, name, "userId", "updatedAt")
+                    VALUES ($1, $2, $3, $4)
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
+                        "userId" = EXCLUDED."userId",
                         "updatedAt" = EXCLUDED."updatedAt"
-                `, [tenant.id, tenant.name, tenant.updatedAt || new Date().toISOString()]);
+                `, [tenant.id, tenant.name, this.userId, tenant.updatedAt || new Date().toISOString()]);
                 console.log(`[SyncManager] Tenant upserted: ${tenant.name} (${tenant.id})`);
             } catch (err) {
                 console.error(`[SyncManager] Tenant upsert failed for "${tenant.name}":`, err.message);
             }
         }
 
-        // 2. Sync Accounts (if present in response)
+        // 2. Sync Accounts (scoped to current user)
         for (const account of (accounts || [])) {
             try {
                 const tenantExists = database.query(`SELECT id FROM "Tenant" WHERE id = $1`, [account.tenantId]);
                 if (tenantExists.rows.length === 0) {
                     database.query(`
-                        INSERT INTO "Tenant" (id, name, "updatedAt") VALUES ($1, $2, $3)
+                        INSERT INTO "Tenant" (id, name, "userId", "updatedAt") VALUES ($1, $2, $3, $4)
                         ON CONFLICT (id) DO NOTHING
-                    `, [account.tenantId, account.tenantId, new Date().toISOString()]);
+                    `, [account.tenantId, account.tenantId, this.userId, new Date().toISOString()]);
                 }
                 database.query(`
-                    INSERT INTO "Account" (id, name, "tenantId", "updatedAt")
-                    VALUES ($1, $2, $3, $4)
+                    INSERT INTO "Account" (id, name, "tenantId", "userId", "updatedAt")
+                    VALUES ($1, $2, $3, $4, $5)
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
+                        "userId" = EXCLUDED."userId",
                         "updatedAt" = EXCLUDED."updatedAt"
-                `, [account.id, account.name, account.tenantId, account.updatedAt || new Date().toISOString()]);
+                `, [account.id, account.name, account.tenantId, this.userId, account.updatedAt || new Date().toISOString()]);
                 console.log(`[SyncManager] Account upserted: ${account.name}`);
             } catch (err) {
                 console.error(`[SyncManager] Account upsert failed for "${account.name}":`, err.message);
             }
         }
 
-        // 3. Sync top-level buckets (API returns buckets directly, not nested under accounts)
-        //    On a full sync (no updatedSince), reconcile: delete local buckets not in the API response.
+        // 3. Sync top-level buckets — reconcile only for THIS user's data
         if (!lastSyncAt && Array.isArray(buckets)) {
             const returnedIds = buckets.map(b => b.id).filter(Boolean);
-            if (returnedIds.length > 0) {
-                const placeholders = returnedIds.map((_, i) => `$${i + 1}`).join(', ');
-                database.query(
-                    `DELETE FROM "Bucket" WHERE id NOT IN (${placeholders})`,
-                    returnedIds
-                );
-            } else {
-                // API returned zero buckets — wipe all local buckets
-                database.query(`DELETE FROM "Bucket"`, []);
+            if (this.userId) {
+                if (returnedIds.length > 0) {
+                    // Delete this user's buckets that are no longer in the API response
+                    database.queryWithArrayParam(
+                        `DELETE FROM "Bucket" WHERE "userId" = $1 AND id NOT IN (${returnedIds.map((_, i) => `$${i + 2}`).join(', ')})`,
+                        returnedIds,
+                        [this.userId]
+                    );
+                } else {
+                    database.query(`DELETE FROM "Bucket" WHERE "userId" = $1`, [this.userId]);
+                }
             }
-            console.log(`[SyncManager] Reconciled local buckets — kept IDs: [${returnedIds.join(', ')}]`);
+            console.log(`[SyncManager] Reconciled local buckets for user ${this.userId} — kept IDs: [${returnedIds.join(', ')}]`);
         }
 
         for (const bucket of (buckets || [])) {
             try {
-                // Derive accountId: use awsAccountId if present, else fall back to tenantId
-                // so the Bucket FK to Account is satisfied.
                 const accountId = bucket.awsAccountId || bucket.accountId || bucket.tenantId;
 
                 // Ensure a matching Account row exists (synthetic if needed)
                 const accountExists = database.query(`SELECT id FROM "Account" WHERE id = $1`, [accountId]);
                 if (accountExists.rows.length === 0) {
-                    // Ensure tenant exists first
                     const tenantId = bucket.tenantId;
                     if (tenantId) {
                         database.query(`
-                            INSERT INTO "Tenant" (id, name, "updatedAt") VALUES ($1, $2, $3)
+                            INSERT INTO "Tenant" (id, name, "userId", "updatedAt") VALUES ($1, $2, $3, $4)
                             ON CONFLICT (id) DO NOTHING
-                        `, [tenantId, tenantId, new Date().toISOString()]);
+                        `, [tenantId, tenantId, this.userId, new Date().toISOString()]);
                     }
                     database.query(`
-                        INSERT INTO "Account" (id, name, "tenantId", "updatedAt")
-                        VALUES ($1, $2, $3, $4)
+                        INSERT INTO "Account" (id, name, "tenantId", "userId", "updatedAt")
+                        VALUES ($1, $2, $3, $4, $5)
                         ON CONFLICT (id) DO NOTHING
-                    `, [accountId, accountId, tenantId || accountId, new Date().toISOString()]);
+                    `, [accountId, accountId, tenantId || accountId, this.userId, new Date().toISOString()]);
                     console.log(`[SyncManager] Synthetic account created for bucket "${bucket.name}": ${accountId}`);
                 }
 
@@ -214,15 +246,14 @@ class SyncManager {
             }
         }
 
-        // 4. Persist the server-returned syncedAt for next incremental sync
+        // 4. Persist the server-returned syncedAt under user-scoped key
         if (syncedAt) {
             try {
                 database.query(`
-                    INSERT INTO "KVStore" (key, value) VALUES ('lastFullSyncAt', $1)
+                    INSERT INTO "KVStore" (key, value) VALUES ($1, $2)
                     ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value
-                `, [syncedAt]);
+                `, [kvKey, syncedAt]);
             } catch (err) {
-                // KVStore table may not exist on older installs — non-fatal
                 console.warn('[SyncManager] Could not persist lastFullSyncAt — KVStore table missing?');
             }
         }
@@ -361,31 +392,32 @@ class SyncManager {
     // ─────────────────────────────────────────────────────────────────────────
 
     async upsertBucketMetadata(bucket) {
-        // Upsert bucket record into local DB
+        // Upsert bucket record into local DB (scoped to current user)
         database.query(`
-            INSERT INTO "Bucket" (id, name, region, "accountId", "awsAccountId", "updatedAt")
-            VALUES ($1, $2, $3, $4, $5, $6)
+            INSERT INTO "Bucket" (id, name, region, "accountId", "awsAccountId", "userId", "updatedAt")
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
             ON CONFLICT (id) DO UPDATE SET
                 name = EXCLUDED.name,
                 region = EXCLUDED.region,
                 "awsAccountId" = EXCLUDED."awsAccountId",
+                "userId" = EXCLUDED."userId",
                 "updatedAt" = EXCLUDED."updatedAt"
-        `, [bucket.id, bucket.name, bucket.region, bucket.accountId, bucket.awsAccountId || null, bucket.updatedAt || new Date().toISOString()]);
+        `, [bucket.id, bucket.name, bucket.region, bucket.accountId, bucket.awsAccountId || null, this.userId, bucket.updatedAt || new Date().toISOString()]);
 
         const files = bucket.files || [];
         for (const file of files) {
             if (!file.key) continue;
             try {
-                // Upsert FileObject into local DB so search works
                 database.query(`
-                    INSERT INTO "FileObject" (id, name, key, "isFolder", size, "mimeType", "bucketId", "updatedAt", "isSynced", "lastSyncedAt", "remoteEtag")
-                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 1, datetime('now'), $9)
+                    INSERT INTO "FileObject" (id, name, key, "isFolder", size, "mimeType", "bucketId", "userId", "updatedAt", "isSynced", "lastSyncedAt", "remoteEtag")
+                    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 1, datetime('now'), $10)
                     ON CONFLICT (id) DO UPDATE SET
                         name = EXCLUDED.name,
                         key = EXCLUDED.key,
                         "isFolder" = EXCLUDED."isFolder",
                         size = EXCLUDED.size,
                         "mimeType" = EXCLUDED."mimeType",
+                        "userId" = EXCLUDED."userId",
                         "updatedAt" = EXCLUDED."updatedAt",
                         "remoteEtag" = EXCLUDED."remoteEtag",
                         "isSynced" = 1,
@@ -398,6 +430,7 @@ class SyncManager {
                     file.size || null,
                     file.mimeType || null,
                     bucket.id,
+                    this.userId,
                     file.updatedAt || new Date().toISOString(),
                     file.eTag || file.etag || null
                 ]);

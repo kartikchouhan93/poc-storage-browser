@@ -127,10 +127,11 @@ class HeartbeatManager {
 
   async _logHeartbeat(status, latencyMs, error, serverTime) {
     try {
+      const userId = authManager.getCurrentUserId();
       await database.query(
-        `INSERT INTO "HeartbeatLog" (id, status, "latencyMs", error, "serverTime")
-         VALUES ($1, $2, $3, $4, $5)`,
-        [uuidv4(), status, latencyMs, error, serverTime]
+        `INSERT INTO "HeartbeatLog" (id, status, "latencyMs", error, "serverTime", "userId")
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [uuidv4(), status, latencyMs, error, serverTime, userId]
       );
     } catch (err) {
       console.error('[Heartbeat] Failed to log heartbeat:', err.message);
@@ -138,17 +139,25 @@ class HeartbeatManager {
   }
 
   /**
-   * Get heartbeat history for the last N minutes
-   * @param {number} minutes - Number of minutes to fetch (default: 60)
-   * @returns {Promise<Array>} Array of heartbeat logs
+   * Get heartbeat history for the last N minutes, scoped to current user
+   * @param {number} minutes
+   * @param {string|null} userId
    */
-  async getHeartbeatHistory(minutes = 60) {
+  async getHeartbeatHistory(minutes = 60, userId = null) {
     try {
-      const result = await database.query(
-        `SELECT * FROM "HeartbeatLog"
-         WHERE "timestamp" > datetime('now', '-${minutes} minutes')
-         ORDER BY "timestamp" ASC`
-      );
+      const result = userId
+        ? await database.query(
+            `SELECT * FROM "HeartbeatLog"
+             WHERE "timestamp" > datetime('now', '-${minutes} minutes')
+               AND "userId" = $1
+             ORDER BY "timestamp" ASC`,
+            [userId]
+          )
+        : await database.query(
+            `SELECT * FROM "HeartbeatLog"
+             WHERE "timestamp" > datetime('now', '-${minutes} minutes')
+             ORDER BY "timestamp" ASC`
+          );
       return result.rows;
     } catch (err) {
       console.error('[Heartbeat] Failed to fetch history:', err.message);

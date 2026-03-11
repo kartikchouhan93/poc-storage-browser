@@ -122,6 +122,18 @@ export default function RecentActivitiesPage() {
         }
     };
 
+    const handleResumeTransfer = async (transferStateId) => {
+        if (!window.electronAPI?.retryTransfer) return;
+        setRetryingId(transferStateId);
+        try {
+            await window.electronAPI.retryTransfer(transferStateId);
+            setTimeout(() => { fetchLocalActivities(); setRetryingId(null); }, 2000);
+        } catch (err) {
+            console.error('Resume failed', err);
+            setRetryingId(null);
+        }
+    };
+
     const formatDate = (dateString) => {
         if (!dateString) return '--';
         const d = new Date(dateString);
@@ -142,6 +154,9 @@ export default function RecentActivitiesPage() {
     const getActionBadge = (action, status) => {
         let colorClasses = 'bg-blue-50 text-blue-600';
         if (status === 'FAILED') colorClasses = 'bg-rose-50 text-rose-600';
+        else if (status === 'IN_PROGRESS') colorClasses = 'bg-blue-50 text-blue-600';
+        else if (status === 'PAUSED') colorClasses = 'bg-amber-50 text-amber-600';
+        else if (status === 'CANCELLED') colorClasses = 'bg-slate-50 text-slate-500';
         else if (action === 'UPLOAD') colorClasses = 'bg-amber-50 text-amber-700';
         else if (action === 'DOWNLOAD') colorClasses = 'bg-emerald-50 text-emerald-700';
         else if (action === 'DELETE') colorClasses = 'bg-red-50 text-red-600';
@@ -174,8 +189,8 @@ export default function RecentActivitiesPage() {
         let totalBytes = 0;
         let transferredBytes = 0;
         activeTransfers.forEach(t => {
-            totalBytes += t.totalSize || 0;
-            transferredBytes += t.bytesTransferred || 0;
+            totalBytes += t.size || 0;
+            transferredBytes += t.loaded || 0;
         });
         return { count: activeTransfers.length, totalBytes, transferredBytes };
     }, [activeTransfers]);
@@ -299,15 +314,21 @@ export default function RecentActivitiesPage() {
                                                     <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500 shrink-0" />
                                                 ) : act.status === 'FAILED' ? (
                                                     <XCircle className="h-3.5 w-3.5 text-rose-500 shrink-0" />
+                                                ) : act.status === 'CANCELLED' ? (
+                                                    <XCircle className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+                                                ) : act.status === 'PAUSED' ? (
+                                                    <Clock className="h-3.5 w-3.5 text-amber-500 shrink-0" />
                                                 ) : (
                                                     <Clock className="h-3.5 w-3.5 text-blue-500 animate-pulse shrink-0" />
                                                 )}
                                                 <span className={`text-xs font-bold tracking-wide ${
                                                     act.status === 'FAILED' ? 'text-rose-600' 
-                                                    : act.status === 'SUCCESS' ? 'text-emerald-600' 
+                                                    : act.status === 'SUCCESS' ? 'text-emerald-600'
+                                                    : act.status === 'CANCELLED' ? 'text-slate-500'
+                                                    : act.status === 'PAUSED' ? 'text-amber-600'
                                                     : 'text-blue-600'
                                                 }`}>
-                                                    {act.status === 'IN_PROGRESS' ? 'In Progress' : act.status}
+                                                    {act.status === 'IN_PROGRESS' ? 'Interrupted' : act.status}
                                                 </span>
                                             </div>
                                         </TableCell>
@@ -335,6 +356,18 @@ export default function RecentActivitiesPage() {
                                                 >
                                                     <RotateCcw className={`h-3 w-3 ${retryingId === act.id ? 'animate-spin' : ''}`} />
                                                     {retryingId === act.id ? '...' : 'Retry'}
+                                                </Button>
+                                            )}
+                                            {(act.status === 'IN_PROGRESS' || act.status === 'PAUSED' || act.status === 'CANCELLED') && (
+                                                <Button
+                                                    variant="ghost"
+                                                    size="sm"
+                                                    className="h-7 text-xs gap-1 text-amber-600 hover:text-amber-800 hover:bg-amber-50"
+                                                    onClick={() => handleResumeTransfer(act.id.replace('resume-', ''))}
+                                                    disabled={retryingId === act.id}
+                                                >
+                                                    <RotateCcw className={`h-3 w-3 ${retryingId === act.id ? 'animate-spin' : ''}`} />
+                                                    {retryingId === act.id ? '...' : 'Resume'}
                                                 </Button>
                                             )}
                                         </TableCell>

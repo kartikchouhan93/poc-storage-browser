@@ -41,7 +41,14 @@ export default function SyncPage() {
     const fetchBuckets = async () => {
         try {
             if (window.electronAPI?.dbQuery) {
-                const res = await window.electronAPI.dbQuery('SELECT id, name FROM "Bucket" ORDER BY name ASC', []);
+                const session = await window.electronAPI.auth?.getSession?.();
+                const userId = session?.email || session?.username || null;
+                const res = await window.electronAPI.dbQuery(
+                    userId
+                        ? 'SELECT id, name FROM "Bucket" WHERE "userId" = $1 ORDER BY name ASC'
+                        : 'SELECT id, name FROM "Bucket" ORDER BY name ASC',
+                    userId ? [userId] : []
+                );
                 setBuckets(res.rows || []);
             }
         } catch (err) {
