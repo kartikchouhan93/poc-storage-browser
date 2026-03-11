@@ -414,7 +414,7 @@ const service = new awsx.ecs.FargateService(
           },
           {
             name: "ALLOWED_ORIGINS",
-            value: process.env.ALLOWED_ORIGINS || "",
+            value: pulumi.interpolate`http://localhost:3000,https://${domainName},http://${alb.loadBalancer.dnsName}`,
           },
           {
             name: "BOT_JWT_SECRET",
