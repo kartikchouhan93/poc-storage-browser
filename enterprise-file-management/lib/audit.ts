@@ -58,6 +58,8 @@ export function logAudit(params: AuditParams): void {
   const { userId, action, resource, resourceId, details, status, ipAddress } =
     params;
 
+  const validUserId = userId && userId.trim() !== "" ? userId : null;
+
   // Run asynchronously in the background — never blocks the caller
   (async () => {
     let country: string | null = null;
@@ -73,19 +75,43 @@ export function logAudit(params: AuditParams): void {
       }
     }
 
-    await prisma.auditLog.create({
-      data: {
-        userId,
-        action,
-        resource: resourceId ? `${resource}:${resourceId}` : resource,
-        details: details ? JSON.stringify(details) : null,
-        status,
-        ipAddress,
-        country,
-        region,
-        ...(userId ? { createdBy: userId, updatedBy: userId } : {}),
-      },
-    });
+    try {
+      await prisma.auditLog.create({
+        data: {
+          userId: validUserId,
+          action,
+          resource: resourceId ? `${resource}:${resourceId}` : resource,
+          details: details ? JSON.stringify(details) : null,
+          status,
+          ipAddress,
+          country,
+          region,
+          ...(validUserId
+            ? { createdBy: validUserId, updatedBy: validUserId }
+            : {}),
+        },
+      });
+    } catch (err: any) {
+      if (err.code === "P2003" && validUserId) {
+        console.warn(
+          `[audit] User ${validUserId} not found, falling back to anonymous audit log.`,
+        );
+        await prisma.auditLog.create({
+          data: {
+            userId: null,
+            action,
+            resource: resourceId ? `${resource}:${resourceId}` : resource,
+            details: details ? JSON.stringify(details) : null,
+            status,
+            ipAddress,
+            country,
+            region,
+          },
+        });
+      } else {
+        throw err;
+      }
+    }
   })().catch((err) => {
     // Silent fail — audit must never crash the main request
     console.error("[audit] Failed to write audit log:", err);

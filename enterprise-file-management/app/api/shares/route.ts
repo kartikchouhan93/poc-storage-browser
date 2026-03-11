@@ -19,16 +19,33 @@ export async function POST(request: NextRequest) {
             resource: "Share",
             status: "FAILED",
             ipAddress: clientIp,
-            details: { reason: "IP not whitelisted for team", method: req.method, path: req.nextUrl.pathname },
+            details: {
+              reason: "IP not whitelisted for team",
+              method: req.method,
+              path: req.nextUrl.pathname,
+            },
           });
-          return NextResponse.json({ error: "Forbidden: IP not whitelisted for your team" }, { status: 403 });
+          return NextResponse.json(
+            { error: "Forbidden: IP not whitelisted for your team" },
+            { status: 403 },
+          );
         }
 
         const body = await req.json();
-        const { fileId, toEmail, expiryDate: expiryDateInput, expiryDays, downloadLimit, password } = body;
+        const {
+          fileId,
+          toEmail,
+          expiryDate: expiryDateInput,
+          expiryDays,
+          downloadLimit,
+          password,
+        } = body;
 
         if (!fileId || !toEmail || (!expiryDateInput && !expiryDays)) {
-          return NextResponse.json({ error: "fileId, toEmail, and expiryDays are required fields." }, { status: 400 });
+          return NextResponse.json(
+            { error: "fileId, toEmail, and expiryDays are required fields." },
+            { status: 400 },
+          );
         }
 
         // Compute expiry date
@@ -37,31 +54,67 @@ export async function POST(request: NextRequest) {
           // Validate ISO format
           const parsed = new Date(expiryDateInput);
           if (isNaN(parsed.getTime())) {
-            return NextResponse.json({ error: "Invalid expiryDate format" }, { status: 400 });
+            return NextResponse.json(
+              { error: "Invalid expiryDate format" },
+              { status: 400 },
+            );
           }
 
           // Validate it's a future date (not today or in the past)
           const now = new Date();
-          const todayUTC = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-          const inputDateUTC = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate()));
+          const todayUTC = new Date(
+            Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()),
+          );
+          const inputDateUTC = new Date(
+            Date.UTC(
+              parsed.getUTCFullYear(),
+              parsed.getUTCMonth(),
+              parsed.getUTCDate(),
+            ),
+          );
 
           if (inputDateUTC.getTime() <= todayUTC.getTime()) {
-            return NextResponse.json({ error: "expiryDate must be a future date" }, { status: 400 });
+            return NextResponse.json(
+              { error: "expiryDate must be a future date" },
+              { status: 400 },
+            );
           }
 
           // Set time to end-of-day 23:59:59 UTC
-          computedExpiry = new Date(Date.UTC(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 23, 59, 59, 0));
+          computedExpiry = new Date(
+            Date.UTC(
+              parsed.getUTCFullYear(),
+              parsed.getUTCMonth(),
+              parsed.getUTCDate(),
+              23,
+              59,
+              59,
+              0,
+            ),
+          );
         } else {
           // Backward compat: use expiryDays
           computedExpiry = new Date();
-          computedExpiry.setDate(computedExpiry.getDate() + parseInt(String(expiryDays), 10));
+          computedExpiry.setDate(
+            computedExpiry.getDate() + parseInt(String(expiryDays), 10),
+          );
         }
 
-        const file = await prisma.fileObject.findUnique({ where: { id: fileId }, include: { bucket: true } });
-        if (!file) return NextResponse.json({ error: "File not found" }, { status: 404 });
+        const file = await prisma.fileObject.findUnique({
+          where: { id: fileId },
+          include: { bucket: true },
+        });
+        if (!file)
+          return NextResponse.json(
+            { error: "File not found" },
+            { status: 404 },
+          );
 
         if (file.tenantId !== user.tenantId && user.role !== "PLATFORM_ADMIN") {
-          return NextResponse.json({ error: "Forbidden: Cannot share files outside your tenant" }, { status: 403 });
+          return NextResponse.json(
+            { error: "Forbidden: Cannot share files outside your tenant" },
+            { status: 403 },
+          );
         }
 
         let passwordHash = null;
@@ -89,20 +142,50 @@ export async function POST(request: NextRequest) {
         });
 
         const protocol = req.headers.get("x-forwarded-proto") || "http";
-        const host = req.headers.get("host") || "localhost:3000";
+        const host =
+          req.headers.get("x-forwarded-host") ||
+          req.headers.get("host") ||
+          "localhost:3000";
         const shareUrl = `${protocol}://${host}/file/share/${share.id}`;
 
-        await sendShareEmailNotification({ toEmail: share.toEmail, shareUrl, expiryDate: share.expiry, downloadLimit: share.downloadLimit, password });
+        await sendShareEmailNotification({
+          toEmail: share.toEmail,
+          shareUrl,
+          expiryDate: share.expiry,
+          downloadLimit: share.downloadLimit,
+          password,
+        });
 
-        logAudit({ userId: user.id, action: "FILE_SHARED", resource: "Share", resourceId: share.id, status: "SUCCESS", ipAddress: clientIp, details: { fileId: file.id, toEmail: share.toEmail } });
+        logAudit({
+          userId: user.id,
+          action: "FILE_SHARED",
+          resource: "Share",
+          resourceId: share.id,
+          status: "SUCCESS",
+          ipAddress: clientIp,
+          details: { fileId: file.id, toEmail: share.toEmail },
+        });
 
         return NextResponse.json(
-          { message: "Share created successfully", share: { id: share.id, toEmail: share.toEmail, expiry: share.expiry, downloadLimit: share.downloadLimit, passwordProtected: share.passwordProtected }, shareUrl },
+          {
+            message: "Share created successfully",
+            share: {
+              id: share.id,
+              toEmail: share.toEmail,
+              expiry: share.expiry,
+              downloadLimit: share.downloadLimit,
+              passwordProtected: share.passwordProtected,
+            },
+            shareUrl,
+          },
           { status: 201 },
         );
       } catch (error) {
         console.error("Failed to create share:", error);
-        return NextResponse.json({ error: "Failed to create file share" }, { status: 500 });
+        return NextResponse.json(
+          { error: "Failed to create file share" },
+          { status: 500 },
+        );
       }
     },
     { allowSelfTenant: true },
@@ -148,15 +231,27 @@ export async function GET(request: NextRequest) {
           status:
             share.status === "ACTIVE" && new Date() > new Date(share.expiry)
               ? "EXPIRED"
-              : share.status === "ACTIVE" && share.downloads >= share.downloadLimit
+              : share.status === "ACTIVE" &&
+                  share.downloads >= share.downloadLimit
                 ? "EXPIRED"
                 : share.status,
         }));
 
-        return NextResponse.json({ shares: formattedShares, pagination: { totalCount, totalPages: Math.ceil(totalCount / limit), currentPage: page, limit } });
+        return NextResponse.json({
+          shares: formattedShares,
+          pagination: {
+            totalCount,
+            totalPages: Math.ceil(totalCount / limit),
+            currentPage: page,
+            limit,
+          },
+        });
       } catch (error) {
         console.error("Failed to fetch shares:", error);
-        return NextResponse.json({ error: "Failed to fetch file shares" }, { status: 500 });
+        return NextResponse.json(
+          { error: "Failed to fetch file shares" },
+          { status: 500 },
+        );
       }
     },
     { allowSelfTenant: true },

@@ -34,6 +34,7 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
   const [loading, setLoading] = React.useState(false)
   const [toEmail, setToEmail] = React.useState("")
   const [expiryDate, setExpiryDate] = React.useState<Date>(getDefaultExpiryDate)
+  const [isCalendarOpen, setIsCalendarOpen] = React.useState(false)
   const [downloadLimit, setDownloadLimit] = React.useState("5")
   const [password, setPassword] = React.useState("")
   const [shareUrl, setShareUrl] = React.useState("")
@@ -128,7 +129,7 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
                 <Label>Expiry Date*</Label>
-                <Popover>
+                <Popover open={isCalendarOpen} onOpenChange={setIsCalendarOpen}>
                   <PopoverTrigger asChild>
                     <Button
                       variant="outline"
@@ -146,7 +147,10 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
                       mode="single"
                       selected={expiryDate}
                       onSelect={(date) => {
-                        if (date) setExpiryDate(date)
+                        if (date) {
+                          setExpiryDate(date)
+                          setIsCalendarOpen(false)
+                        }
                       }}
                       disabled={(date) =>
                         date < tomorrow || date > maxDate

@@ -72,10 +72,11 @@ export async function GET(request: NextRequest) {
     if (
       !botPermissions &&
       user.role !== Role.PLATFORM_ADMIN &&
-      user.role !== Role.TENANT_ADMIN
+      user.role !== Role.TENANT_ADMIN &&
+      user.role !== Role.TEAMMATE
     ) {
       return NextResponse.json(
-        { error: "Forbidden: agent sync requires ADMIN role" },
+        { error: "Forbidden: agent sync requires ADMIN/TEAM role" },
         { status: 403 },
       );
     }

@@ -29,9 +29,18 @@ export async function GET(request: NextRequest) {
       .setExpirationTime("24h")
       .sign(JWT_SECRET);
 
-    const response = NextResponse.redirect(
-      new URL(`/file/share/${shareId}`, request.url),
+    const protocol = request.headers.get("x-forwarded-proto") || "http";
+    const host =
+      request.headers.get("x-forwarded-host") ||
+      request.headers.get("host") ||
+      "localhost:3000";
+
+    const redirectUrl = new URL(
+      `/file/share/${shareId}`,
+      `${protocol}://${host}`,
     );
+
+    const response = NextResponse.redirect(redirectUrl);
 
     response.cookies.set(`share_session_${shareId}`, sessionToken, {
       httpOnly: true,

@@ -33,8 +33,16 @@ export async function GET(request: NextRequest) {
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
+      const email = payload.email as string;
+      const activeTenantId =
+        request.headers.get("x-active-tenant-id") ||
+        request.cookies.get("x-active-tenant-id")?.value;
+
       user = await prisma.user.findFirst({
-        where: { email: payload.email as string },
+        where: {
+          email,
+          ...(activeTenantId ? { tenantId: activeTenantId } : {}),
+        },
         include: {
           policies: true,
           teams: {
@@ -43,6 +51,19 @@ export async function GET(request: NextRequest) {
           },
         },
       });
+
+      if (!user) {
+        user = await prisma.user.findFirst({
+          where: { email },
+          include: {
+            policies: true,
+            teams: {
+              where: { isDeleted: false },
+              include: { team: { include: { policies: true } } },
+            },
+          },
+        });
+      }
     }
 
     if (!user)
@@ -127,7 +148,10 @@ export async function GET(request: NextRequest) {
       });
 
       if (!hasAccess)
-        return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+        return NextResponse.json(
+          { error: "Forbidden-dont have this bucket access" },
+          { status: 403 },
+        );
 
       allowedBucketIds.push(bucket.id);
     } else {

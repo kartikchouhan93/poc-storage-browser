@@ -74,7 +74,10 @@ export async function POST(
       .sign(JWT_SECRET);
 
     const protocol = request.headers.get("x-forwarded-proto") || "http";
-    const host = request.headers.get("host") || "localhost:3000";
+    const host =
+      request.headers.get("x-forwarded-host") ||
+      request.headers.get("host") ||
+      "localhost:3000";
     const magicLinkUrl = `${protocol}://${host}/api/shares/verify?token=${token}`;
 
     await sendMagicLinkEmail({ toEmail: share.toEmail, magicLinkUrl });
