@@ -8,6 +8,7 @@ import {
   ChevronDown,
   Cloud,
   CreditCard,
+  Download,
   Files,
   FolderOpen,
   HardDrive,
@@ -83,6 +84,12 @@ const tenantNavGroups = [
     items: [
       { title: "Audit", icon: FileText, href: "/audit" },
       { title: "Settings", icon: Settings, href: "/settings" },
+    ]
+  },
+  {
+    title: "Tools",
+    items: [
+      { title: "Download Porter", icon: Download, href: "/download" },
     ]
   }
 ];

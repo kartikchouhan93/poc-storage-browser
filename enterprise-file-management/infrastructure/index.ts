@@ -3,6 +3,12 @@ import * as awsx from "@pulumi/awsx";
 import * as pulumi from "@pulumi/pulumi";
 import * as command from "@pulumi/command";
 
+const config = new pulumi.Config();
+// Set via: pulumi config set domainName your.domain.com
+const domainName = config.require("domainName");
+// Set via: pulumi config set certificateArn arn:aws:acm:...
+const certificateArn = config.require("certificateArn");
+
 // ECR Repository and Image
 const repo = new awsx.ecr.Repository("app-repo", {
   forceDelete: true,
@@ -97,7 +103,7 @@ const prismaMigrate = new command.local.Command(
 // Security Group for Application (ALB + Tasks)
 const appSg = new aws.ec2.SecurityGroup("app-sg", {
   vpcId: vpc.vpcId,
-  description: "Allow HTTP traffic",
+  description: "Allow HTTP and HTTPS traffic",
   ingress: [
     {
       protocol: "tcp",
@@ -109,6 +115,12 @@ const appSg = new aws.ec2.SecurityGroup("app-sg", {
       protocol: "tcp",
       fromPort: 80,
       toPort: 80,
+      cidrBlocks: ["0.0.0.0/0"],
+    },
+    {
+      protocol: "tcp",
+      fromPort: 443,
+      toPort: 443,
       cidrBlocks: ["0.0.0.0/0"],
     },
   ],
@@ -137,8 +149,26 @@ const alb = new awsx.lb.ApplicationLoadBalancer("app-alb", {
   },
   listeners: [
     {
+      // Redirect HTTP → HTTPS
       port: 80,
       protocol: "HTTP",
+      defaultActions: [
+        {
+          type: "redirect",
+          redirect: {
+            port: "443",
+            protocol: "HTTPS",
+            statusCode: "HTTP_301",
+          },
+        },
+      ],
+    },
+    {
+      // HTTPS listener — terminates TLS at the ALB
+      port: 443,
+      protocol: "HTTPS",
+      certificateArn: certificateArn,
+      sslPolicy: "ELBSecurityPolicy-TLS13-1-2-2021-06",
     },
   ],
 });
@@ -410,7 +440,8 @@ const service = new awsx.ecs.FargateService(
   { dependsOn: [prismaMigrate] },
 );
 
-export const url = alb.loadBalancer.dnsName;
+export const url = pulumi.interpolate`https://${domainName}`;
+export const albDnsName = alb.loadBalancer.dnsName;
 export const dbEndpoint = db.endpoint;
 export const appLogGroupName = appLogGroup.name;
 

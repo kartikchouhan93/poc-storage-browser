@@ -1,3 +1,8 @@
 encryptionsalt: v1:C88SDp4RL8w=:v1:bfaRTq7/9H4ag3v9:71A+B+wIhxcbPzI99RvBnEFSHex2oQ==
 config:
   aws:region: ap-south-1
+  # Set your domain before deploying: pulumi config set domainName your.domain.com
+  # domainName: your.domain.com
+
+  enterprise-file-management:domainName: uat-datadock.smcindiaonline.org
+  enterprise-file-management:certificateArn: arn:aws:acm:ap-south-1:686255956392:certificate/491758b2-a24b-4429-8a4d-f1ccb877e25f

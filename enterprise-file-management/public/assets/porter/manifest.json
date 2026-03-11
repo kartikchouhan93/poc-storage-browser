@@ -1,0 +1,34 @@
+{
+  "version": "1.0.0",
+  "releaseDate": "2025-01-01",
+  "changelog": "Initial release of Porter agent",
+  "builds": [
+    {
+      "platform": "linux",
+      "label": "Linux",
+      "arch": "x64",
+      "filename": "porter-1.0.0-linux.deb",
+      "ext": ".deb",
+      "size": null,
+      "available": false
+    },
+    {
+      "platform": "windows",
+      "label": "Windows",
+      "arch": "x64",
+      "filename": "porter-1.0.0-windows.exe",
+      "ext": ".exe",
+      "size": null,
+      "available": false
+    },
+    {
+      "platform": "mac",
+      "label": "macOS",
+      "arch": "universal",
+      "filename": "porter-1.0.0-mac.dmg",
+      "ext": ".dmg",
+      "size": null,
+      "available": false
+    }
+  ]
+}

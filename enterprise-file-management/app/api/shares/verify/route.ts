@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
 
     response.cookies.set(`share_session_${shareId}`, sessionToken, {
       httpOnly: true,
-      secure: process.env.NODE_ENV === "production",
+      secure: protocol === "https",
       sameSite: "lax",
       maxAge: 60 * 60 * 24, // 24 hours
       path: "/",
