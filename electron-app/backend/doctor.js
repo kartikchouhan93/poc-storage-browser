@@ -6,6 +6,8 @@
 
 const fs = require('fs/promises');
 const path = require('path');
+const os = require('os');
+const { execFile } = require('child_process');
 const axios = require('axios');
 const tls = require('tls');
 const { v4: uuidv4 } = require('uuid');
@@ -35,7 +37,7 @@ class DoctorManager {
   /**
    * Run all diagnostics sequentially so the UI can show step-by-step progress.
    */
-  async runAll(rootPath) {
+  async runAll(rootPath, userId = null) {
     const diagnostics = [];
 
     const checks = [
@@ -44,9 +46,10 @@ class DoctorManager {
       () => this.checkClockSkew(),
       () => this.checkProxyDetection(),
       async () => {
-        const bucket = await this._getFirstBucket();
+        const bucket = await this._getFirstBucket(userId);
         return bucket ? this.checkMultipartHandshake(bucket.id) : this._skipMultipart();
       },
+      () => this.checkRouteTrace(),
     ];
 
     for (const check of checks) {
@@ -64,7 +67,7 @@ class DoctorManager {
       }
     }
 
-    await this._persistDiagnostics(diagnostics);
+    await this._persistDiagnostics(diagnostics, userId);
     this._emit({ type: 'all-complete', diagnostics });
 
     // Persist each diagnostic result to LocalSyncActivity so it appears in Recent Activities
@@ -349,16 +352,146 @@ class DoctorManager {
     }
   }
 
-  // ── Persistence ───────────────────────────────────────────────────────────
-  async _persistDiagnostics(diagnostics) {
+  // ── 6. Route Traceroute ─────────────────────────────────────────────────
+  async checkRouteTrace() {
+    const name = 'Route Trace';
+    const start = Date.now();
+    const steps = [];
+
+    const step = (label, status, ms) => {
+      const s = { label, status, ms };
+      steps.push(s);
+      this._emit({ type: 'step', diagnostic: name, step: s, steps: [...steps] });
+      console.log(`[Doctor] ${name} → ${label}: ${status} (${ms}ms)`);
+    };
+
+    this._emit({ type: 'start', diagnostic: name });
+
+    // Extract hostname from ENTERPRISE_URL
+    let targetHost;
     try {
-      await database.query(`DELETE FROM "DiagnosticsLog"`, []);
+      targetHost = new URL(ENTERPRISE_URL).hostname;
+      step(`Target: ${targetHost}`, 'pass', 0);
+    } catch (err) {
+      step(`Invalid target URL: ${ENTERPRISE_URL}`, 'fail', 0);
+      return { name, status: 'fail', detail: 'Invalid enterprise URL', durationMs: Date.now() - start, steps };
+    }
+
+    // Pick the right command per platform
+    const platform = os.platform();
+    let cmd, args;
+    if (platform === 'win32') {
+      cmd = 'tracert';
+      args = ['-d', '-w', '3000', '-h', '30', targetHost];
+    } else {
+      // macOS and Linux
+      cmd = 'traceroute';
+      args = ['-n', '-w', '3', '-m', '30', targetHost];
+    }
+
+    step(`Running ${cmd} (${platform})`, 'pass', 0);
+
+    return new Promise((resolve) => {
+      const t0 = Date.now();
+      const child = execFile(cmd, args, { timeout: 60000 }, (err, stdout, stderr) => {
+        const output = (stdout || '') + (stderr || '');
+
+        if (err && !stdout) {
+          step(`${cmd} failed: ${err.message}`, 'fail', Date.now() - t0);
+          return resolve({ name, status: 'fail', detail: err.message, durationMs: Date.now() - start, steps });
+        }
+
+        // Parse hops from output
+        const hops = [];
+        const lines = output.split('\n');
+        for (const line of lines) {
+          const trimmed = line.trim();
+          if (!trimmed) continue;
+
+          // Match hop lines: starts with a number (hop count)
+          // Windows: "  1    <1 ms    <1 ms    <1 ms  192.168.1.1"
+          // Linux/Mac: " 1  192.168.1.1  0.456 ms  0.389 ms  0.352 ms"
+          const hopMatch = trimmed.match(/^\s*(\d+)\s+(.+)/);
+          if (!hopMatch) continue;
+
+          const hopNum = parseInt(hopMatch[1], 10);
+          const rest = hopMatch[2].trim();
+
+          // Check for timeout (* * *)
+          const isTimeout = /^\*\s+\*\s+\*/.test(rest) || rest === '* * *';
+
+          // Extract IP addresses from the line
+          const ipMatch = rest.match(/(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/);
+          const ip = ipMatch ? ipMatch[1] : null;
+
+          // Extract latency values
+          const latencies = [];
+          const latencyPattern = /(\d+(?:\.\d+)?)\s*ms/g;
+          let m;
+          while ((m = latencyPattern.exec(rest)) !== null) {
+            latencies.push(parseFloat(m[1]));
+          }
+          // Handle Windows "<1 ms" as 0.5ms
+          const subMsCount = (rest.match(/<1\s*ms/g) || []).length;
+          for (let i = 0; i < subMsCount; i++) latencies.push(0.5);
+
+          const avgMs = latencies.length > 0
+            ? Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length * 100) / 100
+            : null;
+
+          if (isTimeout) {
+            step(`Hop ${hopNum}: * * * (timeout)`, 'warn', 0);
+            hops.push({ hop: hopNum, ip: null, avgMs: null, timeout: true });
+          } else if (ip) {
+            const label = avgMs !== null
+              ? `Hop ${hopNum}: ${ip} (${avgMs}ms)`
+              : `Hop ${hopNum}: ${ip}`;
+            step(label, 'pass', avgMs || 0);
+            hops.push({ hop: hopNum, ip, avgMs, timeout: false });
+          }
+        }
+
+        if (hops.length === 0) {
+          step('No hops detected — command may not be available', 'warn', 0);
+          return resolve({ name, status: 'warn', detail: `${cmd} returned no parseable hops`, durationMs: Date.now() - start, steps });
+        }
+
+        const totalHops = hops.length;
+        const reachedTarget = hops.some(h => h.ip === targetHost);
+        const timeouts = hops.filter(h => h.timeout).length;
+
+        const summaryStatus = reachedTarget ? 'pass' : (timeouts > totalHops / 2 ? 'fail' : 'warn');
+        const detail = `${totalHops} hops, ${timeouts} timeouts${reachedTarget ? ', target reached' : ', target not confirmed'}`;
+        step(detail, summaryStatus, 0);
+
+        resolve({
+          name,
+          status: summaryStatus,
+          detail,
+          durationMs: Date.now() - start,
+          steps,
+          data: { targetHost, platform, totalHops, timeouts, reachedTarget, hops },
+        });
+      });
+    });
+  }
+
+
+  // ── Persistence ───────────────────────────────────────────────────────────
+  async _persistDiagnostics(diagnostics, userId = null) {
+    try {
+      // Delete only this user's previous diagnostics (or unscoped ones if no userId)
+      if (userId) {
+        await database.query(`DELETE FROM "DiagnosticsLog" WHERE "userId" = $1`, [userId]);
+      } else {
+        await database.query(`DELETE FROM "DiagnosticsLog" WHERE "userId" IS NULL`, []);
+      }
       for (const d of diagnostics) {
         await database.query(
-          `INSERT INTO "DiagnosticsLog" (id, name, status, detail, "durationMs", data)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
+          `INSERT INTO "DiagnosticsLog" (id, name, status, detail, "durationMs", data, "userId")
+           VALUES ($1, $2, $3, $4, $5, $6, $7)`,
           [uuidv4(), d.name, d.status, d.detail, d.durationMs || 0,
-           JSON.stringify({ data: d.data || null, steps: d.steps || [] })]
+           JSON.stringify({ data: d.data || null, steps: d.steps || [] }), userId]
         );
       }
       console.log(`[Doctor] Persisted ${diagnostics.length} diagnostics to SQLite`);
@@ -367,9 +500,14 @@ class DoctorManager {
     }
   }
 
-  async getLastDiagnostics() {
+  async getLastDiagnostics(userId = null) {
     try {
-      const result = await database.query(`SELECT * FROM "DiagnosticsLog" ORDER BY "ranAt" DESC`);
+      const result = userId
+        ? await database.query(
+            `SELECT * FROM "DiagnosticsLog" WHERE "userId" = $1 ORDER BY "ranAt" DESC`,
+            [userId]
+          )
+        : await database.query(`SELECT * FROM "DiagnosticsLog" ORDER BY "ranAt" DESC`);
       return result.rows.map(r => {
         let parsed = {};
         try { parsed = JSON.parse(r.data); } catch {}
@@ -382,9 +520,11 @@ class DoctorManager {
   }
 
   // ── Helpers ───────────────────────────────────────────────────────────────
-  async _getFirstBucket() {
+  async _getFirstBucket(userId = null) {
     try {
-      const result = await database.query('SELECT id FROM "Bucket" LIMIT 1');
+      const result = userId
+        ? await database.query('SELECT id FROM "Bucket" WHERE "userId" = $1 LIMIT 1', [userId])
+        : await database.query('SELECT id FROM "Bucket" LIMIT 1');
       return result.rows[0] || null;
     } catch { return null; }
   }

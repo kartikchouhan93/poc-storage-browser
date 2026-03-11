@@ -36,6 +36,7 @@ const DIAG_NAMES = [
   "Clock Skew",
   "Proxy Detection",
   "Multipart Handshake",
+  "Route Trace",
 ];
 
 export default function DoctorPage() {

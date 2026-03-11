@@ -174,6 +174,7 @@ const initDB = () => {
       );
     `);
     safeAddColumn('Bucket', 'awsAccountId', 'TEXT');
+    safeAddColumn('Bucket', 'userId', 'TEXT');
 
     conn.exec(`
       CREATE TABLE IF NOT EXISTS "FileObject" (
@@ -199,15 +200,18 @@ const initDB = () => {
     safeAddColumn('FileObject', 'localEtag', 'TEXT');
     safeAddColumn('FileObject', 'syncStatus', 'TEXT', "'Synced'");
     safeAddColumn('FileObject', 'lastModifiedOs', 'TEXT');
+    safeAddColumn('FileObject', 'userId', 'TEXT');
 
     conn.exec(`
       CREATE TABLE IF NOT EXISTS "SyncState" (
         "id" TEXT PRIMARY KEY,
         "resourceId" TEXT UNIQUE NOT NULL,
         "lastSyncTimestamp" TEXT,
-        "status" TEXT
+        "status" TEXT,
+        "userId" TEXT
       );
     `);
+    safeAddColumn('SyncState', 'userId', 'TEXT');
 
     conn.exec(`
       CREATE TABLE IF NOT EXISTS "LocalSyncActivity" (
@@ -304,9 +308,11 @@ const initDB = () => {
         "status" TEXT NOT NULL,
         "latencyMs" INTEGER,
         "error" TEXT,
-        "serverTime" TEXT
+        "serverTime" TEXT,
+        "userId" TEXT
       );
     `);
+    safeAddColumn('HeartbeatLog', 'userId', 'TEXT');
 
     // ── AgentHeartbeatLog table for local agent health checks ────────────
     conn.exec(`
@@ -315,9 +321,11 @@ const initDB = () => {
         "timestamp" TEXT DEFAULT (datetime('now')),
         "status" TEXT NOT NULL,
         "latencyMs" INTEGER,
-        "error" TEXT
+        "error" TEXT,
+        "userId" TEXT
       );
     `);
+    safeAddColumn('AgentHeartbeatLog', 'userId', 'TEXT');
 
     // Prune agent heartbeat logs older than 24 hours
     conn.exec(`
@@ -340,12 +348,14 @@ const initDB = () => {
         "detail" TEXT,
         "durationMs" INTEGER,
         "data" TEXT,
-        "ranAt" TEXT DEFAULT (datetime('now'))
+        "ranAt" TEXT DEFAULT (datetime('now')),
+        "userId" TEXT
       );
     `);
+    safeAddColumn('DiagnosticsLog', 'userId', 'TEXT');
 
     // ── KVStore — generic key/value store for agent state ────────────────────
-    // Used for: lastFullSyncAt (incremental sync cursor), etc.
+    // Key format: "<key>:<userId>" for user-scoped entries (e.g. "lastFullSyncAt:user@example.com")
     conn.exec(`
       CREATE TABLE IF NOT EXISTS "KVStore" (
         "key" TEXT PRIMARY KEY,
@@ -353,6 +363,44 @@ const initDB = () => {
         "updatedAt" TEXT DEFAULT (datetime('now'))
       );
     `);
+
+    // ── TransferState — persists in-progress/failed transfers for resume ─────
+    conn.exec(`
+      CREATE TABLE IF NOT EXISTS "TransferState" (
+        "id" TEXT PRIMARY KEY,
+        "type" TEXT NOT NULL,
+        "status" TEXT NOT NULL,
+        "bucketId" TEXT NOT NULL,
+        "s3Key" TEXT NOT NULL,
+        "localPath" TEXT NOT NULL,
+        "totalSize" INTEGER DEFAULT 0,
+        "bytesTransferred" INTEGER DEFAULT 0,
+        "mimeType" TEXT,
+        "uploadId" TEXT,
+        "completedParts" TEXT,
+        "configId" TEXT,
+        "syncJobId" TEXT,
+        "error" TEXT,
+        "createdAt" TEXT DEFAULT (datetime('now')),
+        "updatedAt" TEXT DEFAULT (datetime('now')),
+        "userId" TEXT
+      );
+    `);
+    safeAddColumn('TransferState', 'userId', 'TEXT');
+
+    // ── Tenant / Account userId columns ──────────────────────────────────────
+    safeAddColumn('Tenant', 'userId', 'TEXT');
+    safeAddColumn('Account', 'userId', 'TEXT');
+
+    // ── Indexes for userId-scoped queries ─────────────────────────────────────
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_bucket_userId ON "Bucket"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_fileobject_userId ON "FileObject"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_fileobject_bucketId ON "FileObject"("bucketId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_syncactivity_userId ON "LocalSyncActivity"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_syncconfig_userId ON "SyncConfig"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_transferstate_userId ON "TransferState"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_diagnostics_userId ON "DiagnosticsLog"("userId");`);
+    conn.exec(`CREATE INDEX IF NOT EXISTS idx_heartbeat_userId ON "HeartbeatLog"("userId");`);
 
     conn.exec('COMMIT;');
     console.log('[Database] SQLite initialized successfully');
@@ -372,29 +420,43 @@ const closeDB = () => {
 };
 
 /**
- * Wipe cloud-metadata tables on logout.
- * Preserves sync history tables (LocalSyncActivity, SyncJob, SyncConfig, SyncMapping)
- * since they are scoped by userId/botId and must survive re-login.
+ * Clear all data belonging to a specific user on logout.
+ * Does NOT delete data for other users — preserves multi-user isolation.
  * Order respects FK constraints (children before parents).
+ * @param {string} userId - The user's email/identifier
  */
-const wipeAllData = () => {
+const clearUserData = (userId) => {
+  if (!userId) {
+    console.warn('[Database] clearUserData called without userId — skipping');
+    return;
+  }
   const conn = getDb();
   conn.exec('BEGIN TRANSACTION;');
   try {
-    // Only wipe cloud-mirror data — NOT sync history/config (those are userId-scoped)
-    const tables = [
-      'SyncState', 'FileObject', 'Bucket', 'Account', 'Tenant', 'KVStore',
-    ];
-    for (const t of tables) {
-      conn.exec(`DELETE FROM "${t}";`);
-    }
+    // Children first (FK order)
+    conn.prepare(`DELETE FROM "FileObject" WHERE "userId" = ?`).run(userId);
+    conn.prepare(`DELETE FROM "Bucket" WHERE "userId" = ?`).run(userId);
+    conn.prepare(`DELETE FROM "Account" WHERE "userId" = ?`).run(userId);
+    conn.prepare(`DELETE FROM "Tenant" WHERE "userId" = ?`).run(userId);
+    conn.prepare(`DELETE FROM "SyncState" WHERE "userId" = ?`).run(userId);
+    conn.prepare(`DELETE FROM "TransferState" WHERE "userId" = ?`).run(userId);
+    // KVStore keys are namespaced as "<key>:<userId>"
+    conn.prepare(`DELETE FROM "KVStore" WHERE "key" LIKE ?`).run(`%:${userId}`);
     conn.exec('COMMIT;');
-    console.log('[Database] Cloud metadata wiped on logout (sync history preserved)');
+    console.log(`[Database] User data cleared for: ${userId}`);
   } catch (e) {
     conn.exec('ROLLBACK;');
-    console.error('[Database] Wipe failed:', e);
+    console.error('[Database] clearUserData failed:', e);
     throw e;
   }
+};
+
+/**
+ * Legacy alias — kept for any call sites that haven't been updated yet.
+ * Now a no-op: data is preserved per-user and cleared via clearUserData().
+ */
+const wipeAllData = () => {
+  console.warn('[Database] wipeAllData() called — this is now a no-op. Use clearUserData(userId) instead.');
 };
 
 module.exports = {
@@ -403,5 +465,6 @@ module.exports = {
   initDB,
   closeDB,
   wipeAllData,
+  clearUserData,
   getDb,
 };

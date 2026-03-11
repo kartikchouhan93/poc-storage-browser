@@ -51,14 +51,55 @@ export const AuthProvider = ({ children }) => {
             return;
         }
         try {
-            // Check if this machine has a registered bot identity — if so, prefer bot auth
+            // 1. SSO/Cognito session takes priority — check it first
+            const session = await window.electronAPI.auth.getSession();
+            if (session?.accessToken && !_isTokenExpired(session.idToken || session.accessToken)) {
+                console.log('[AuthContext] Valid SSO session found — using SSO identity');
+                // Ensure bot state is cleared when SSO session is valid
+                setIsBot(false);
+                setBotName(null);
+                setIsAutoLogin(false);
+                setToken(session.accessToken);
+                const decoded = _decodeUser(session.idToken || session.accessToken);
+                setUser({ ...decoded, email: session.email || decoded.email });
+                await window.electronAPI.initSync?.(session.idToken || session.accessToken);
+                try {
+                    await window.electronAPI.syncBucketsNow?.();
+                } catch (e) {
+                    console.warn('[AuthContext] Bucket sync failed:', e);
+                }
+                setLoading(false);
+                return;
+            }
+
+            // 2. SSO token expired — try silent refresh before falling back to bot
+            if (session?.accessToken && _isTokenExpired(session.idToken || session.accessToken)) {
+                console.log('[AuthContext] SSO token expired, attempting refresh...');
+                const refreshResult = await window.electronAPI.auth.refresh();
+                if (refreshResult?.success) {
+                    const newToken = refreshResult.idToken || refreshResult.accessToken;
+                    // Ensure bot state is cleared when SSO refresh succeeds
+                    setIsBot(false);
+                    setBotName(null);
+                    setIsAutoLogin(false);
+                    setToken(newToken);
+                    const decoded = _decodeUser(newToken);
+                    setUser({ ...decoded, email: session.email || decoded.email });
+                    await window.electronAPI.initSync?.(newToken);
+                    window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bucket sync failed:', e));
+                    setLoading(false);
+                    return;
+                }
+                console.log('[AuthContext] SSO refresh failed — falling through to bot check');
+            }
+
+            // 3. No valid SSO session — only NOW check for bot identity
             const hasBotIdentity = window.electronAPI?.bot?.getBotId
                 ? (await window.electronAPI.bot.getBotId())?.botId
                 : null;
 
-            // If bot identity exists, attempt bot auto-login FIRST (takes priority)
             if (hasBotIdentity && window.electronAPI?.bot?.attemptAutoLogin) {
-                console.log('[AuthContext] Bot identity found, attempting bot auto-login first...');
+                console.log('[AuthContext] No SSO session, bot identity found — attempting bot auto-login...');
                 const autoLoginResult = await window.electronAPI.bot.attemptAutoLogin();
                 if (autoLoginResult.success) {
                     console.log('[AuthContext] Bot auto-login successful');
@@ -66,7 +107,6 @@ export const AuthProvider = ({ children }) => {
                     setIsBot(true);
                     setIsAutoLogin(true);
                     
-                    // Decode bot name from JWT
                     let resolvedBotName = 'Service Agent';
                     try {
                         const p = JSON.parse(atob(autoLoginResult.accessToken.split('.')[1]));
@@ -81,43 +121,12 @@ export const AuthProvider = ({ children }) => {
                         sub: autoLoginResult.botId 
                     });
                     
-                    window.electronAPI.initSync?.(autoLoginResult.accessToken);
+                    await window.electronAPI.initSync?.(autoLoginResult.accessToken);
                     window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Auto-login bucket sync failed:', e));
                     setLoading(false);
                     return;
                 }
-                console.log('[AuthContext] Bot auto-login failed:', autoLoginResult.reason, '— falling through to SSO');
-            }
-
-            // No bot identity or bot login failed — try existing Cognito session
-            const session = await window.electronAPI.auth.getSession();
-            if (session?.accessToken && !_isTokenExpired(session.idToken || session.accessToken)) {
-                setToken(session.accessToken);
-                const decoded = _decodeUser(session.idToken || session.accessToken);
-                setUser({ ...decoded, email: session.email || decoded.email });
-                // Re-init sync engine with the stored token
-                window.electronAPI.initSync?.(session.idToken || session.accessToken);
-                // Populate buckets in local DB immediately
-                window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bucket sync failed:', e));
-                setLoading(false);
-                return;
-            }
-
-            // Cognito token expired — try silent refresh
-            if (session?.accessToken && _isTokenExpired(session.idToken || session.accessToken)) {
-                console.log('[AuthContext] Cognito token expired, attempting refresh...');
-                const refreshResult = await window.electronAPI.auth.refresh();
-                if (refreshResult?.success) {
-                    const newToken = refreshResult.idToken || refreshResult.accessToken;
-                    setToken(newToken);
-                    const decoded = _decodeUser(newToken);
-                    setUser({ ...decoded, email: session.email || decoded.email });
-                    window.electronAPI.initSync?.(newToken);
-                    window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bucket sync failed:', e));
-                    setLoading(false);
-                    return;
-                }
-                console.log('[AuthContext] Cognito refresh failed');
+                console.log('[AuthContext] Bot auto-login failed:', autoLoginResult.reason);
             }
         } catch (err) {
             console.warn('[AuthContext] Session hydration failed:', err);
@@ -134,14 +143,29 @@ export const AuthProvider = ({ children }) => {
         let cleanupExpired = null;
 
         if (window.electronAPI?.auth?.onSSOResult) {
-            cleanupSSO = window.electronAPI.auth.onSSOResult((data) => {
-                console.log('[AuthContext] SSO result received');
+            cleanupSSO = window.electronAPI.auth.onSSOResult(async (data) => {
+                console.log('[AuthContext] SSO result received — clearing any bot identity');
+                // Clear bot state — SSO user identity takes over
+                setIsBot(false);
+                setBotName(null);
+                setIsAutoLogin(false);
+
+                // Stop any existing sync cycle (e.g. from bot auto-login) BEFORE
+                // re-initializing with the SSO token. This prevents race conditions
+                // where the old identity's in-flight sync overlaps with the new one.
+                await window.electronAPI.stopSync?.();
+
                 setToken(data.idToken);
                 const decoded = _decodeUser(data.idToken);
                 setUser({ ...decoded, email: data.email || decoded.email });
-                window.electronAPI.initSync?.(data.idToken);
+                // Await initSync before syncing buckets to ensure token + userId are set
+                await window.electronAPI.initSync?.(data.idToken);
                 // Populate buckets before navigating
-                window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bucket sync failed:', e));
+                try {
+                    await window.electronAPI.syncBucketsNow?.();
+                } catch (e) {
+                    console.warn('[AuthContext] Bucket sync failed:', e);
+                }
                 navigate('/');
             });
         }
@@ -194,7 +218,7 @@ export const AuthProvider = ({ children }) => {
             setToken(result.accessToken);
             const decoded = _decodeUser(result.idToken || result.accessToken);
             setUser({ ...decoded, email: decoded.email || email });
-            window.electronAPI.initSync?.(result.idToken || result.accessToken);
+            await window.electronAPI.initSync?.(result.idToken || result.accessToken);
             // Populate buckets before navigating to dashboard
             try {
                 await window.electronAPI.syncBucketsNow?.();
@@ -227,7 +251,7 @@ export const AuthProvider = ({ children }) => {
             setRequiresNewPassword(false);
             setChallengeSession(null);
             setChallengeUsername(null);
-            window.electronAPI.initSync?.(result.idToken || result.accessToken);
+            await window.electronAPI.initSync?.(result.idToken || result.accessToken);
             // Populate buckets before navigating
             try {
                 await window.electronAPI.syncBucketsNow?.();
@@ -261,7 +285,7 @@ export const AuthProvider = ({ children }) => {
             } catch {}
             setBotName(resolvedBotName);
             setUser({ email: result.email, username: result.email, name: resolvedBotName, sub: botId });
-            window.electronAPI.initSync?.(result.accessToken);
+            await window.electronAPI.initSync?.(result.accessToken);
             navigate('/');
             window.electronAPI.syncBucketsNow?.().catch(e => console.warn('[AuthContext] Bot bucket sync failed (non-fatal):', e));
             return { success: true };

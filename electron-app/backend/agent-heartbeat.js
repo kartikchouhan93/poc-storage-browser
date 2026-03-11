@@ -6,6 +6,7 @@
 
 const { v4: uuidv4 } = require('uuid');
 const database = require('./database');
+const authManager = require('./auth');
 
 const INTERVAL_MS = 30 * 1000; // 30 seconds
 
@@ -78,10 +79,11 @@ class AgentHeartbeatManager {
 
   async _logAgentHeartbeat(status, latencyMs, error) {
     try {
+      const userId = authManager.getCurrentUserId();
       await database.query(
-        `INSERT INTO "AgentHeartbeatLog" (id, status, "latencyMs", error)
-         VALUES ($1, $2, $3, $4)`,
-        [uuidv4(), status, latencyMs, error]
+        `INSERT INTO "AgentHeartbeatLog" (id, status, "latencyMs", error, "userId")
+         VALUES ($1, $2, $3, $4, $5)`,
+        [uuidv4(), status, latencyMs, error, userId]
       );
     } catch (err) {
       console.error('[AgentHeartbeat] Failed to log heartbeat:', err.message);
@@ -89,17 +91,25 @@ class AgentHeartbeatManager {
   }
 
   /**
-   * Get agent heartbeat history for the last N minutes
-   * @param {number} minutes - Number of minutes to fetch (default: 60)
-   * @returns {Promise<Array>} Array of agent heartbeat logs
+   * Get agent heartbeat history for the last N minutes, scoped to current user
+   * @param {number} minutes
+   * @param {string|null} userId
    */
-  async getAgentHeartbeatHistory(minutes = 60) {
+  async getAgentHeartbeatHistory(minutes = 60, userId = null) {
     try {
-      const result = await database.query(
-        `SELECT * FROM "AgentHeartbeatLog"
-         WHERE "timestamp" > datetime('now', '-${minutes} minutes')
-         ORDER BY "timestamp" ASC`
-      );
+      const result = userId
+        ? await database.query(
+            `SELECT * FROM "AgentHeartbeatLog"
+             WHERE "timestamp" > datetime('now', '-${minutes} minutes')
+               AND "userId" = $1
+             ORDER BY "timestamp" ASC`,
+            [userId]
+          )
+        : await database.query(
+            `SELECT * FROM "AgentHeartbeatLog"
+             WHERE "timestamp" > datetime('now', '-${minutes} minutes')
+             ORDER BY "timestamp" ASC`
+          );
       return result.rows;
     } catch (err) {
       console.error('[AgentHeartbeat] Failed to fetch history:', err.message);

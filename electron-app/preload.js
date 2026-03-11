@@ -72,6 +72,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   pauseTransfer:      (id) => timedInvoke('pause-transfer', id),
   resumeTransfer:     (id) => timedInvoke('resume-transfer', id),
   terminateTransfer:  (id) => timedInvoke('terminate-transfer', id),
+  getIncompleteTransfers: () => timedInvoke('get-incomplete-transfers'),
+  retryTransfer:      (id) => timedInvoke('retry-transfer', id),
   onTransferStatusUpdate: (callback) => {
     const sub = (_, val) => callback(val);
     ipcRenderer.on('transfer-status-update', sub);

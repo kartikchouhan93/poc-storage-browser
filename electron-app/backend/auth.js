@@ -92,6 +92,15 @@ class AuthManager {
     s.set('email',        result.email        || result.username || '');
     console.log('[AuthManager] Tokens saved to store for:', s.get('email'));
     this._scheduleRefresh(result.idToken);
+
+    // Clear stale AWS credential cache on every login to prevent
+    // cross-user credential leakage (fixes 403 errors after re-login)
+    try {
+      const credentialManager = require('./aws-credentials');
+      credentialManager.clear();
+    } catch (e) {
+      console.warn('[AuthManager] Could not clear credential cache on login:', e.message);
+    }
   }
   /**
    * Use the stored refreshToken to get a new accessToken + idToken from Cognito.
@@ -163,6 +172,40 @@ class AuthManager {
     } catch (err) {
       console.warn('[AuthManager] getToken error:', err.message);
       return null;
+    }
+  }
+
+  /**
+   * Returns the stable user identifier for the current session.
+   * Uses email as the primary key (consistent with how userId is stored in DB).
+   * @returns {string|null}
+   */
+  getCurrentUserId() {
+    try {
+      const session = this.getSession();
+      return session?.email || session?.username || null;
+    } catch (err) {
+      console.warn('[AuthManager] getCurrentUserId error:', err.message);
+      return null;
+    }
+  }
+
+  /**
+   * Returns both userId and botId for the current session.
+   * @returns {{ userId: string|null, botId: string|null }}
+   */
+  getCurrentIdentity() {
+    try {
+      const userId = this.getCurrentUserId();
+      let botId = null;
+      try {
+        const botAuth = require('./bot-auth');
+        botId = botAuth.getBotId() || null;
+      } catch {}
+      return { userId, botId };
+    } catch (err) {
+      console.warn('[AuthManager] getCurrentIdentity error:', err.message);
+      return { userId: null, botId: null };
     }
   }
 

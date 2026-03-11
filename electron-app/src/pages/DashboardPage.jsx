@@ -147,10 +147,20 @@ export default function DashboardPage() {
   const fetchAll = useCallback(async () => {
     if (!window.electronAPI) return;
     try {
-      // Core stats from local DB
+      // Core stats from local DB — scoped to current user
       const [bucketRes, fileRes, actRes, configRes] = await Promise.all([
-        window.electronAPI.dbQuery('SELECT COUNT(*) as count FROM "Bucket"', []),
-        window.electronAPI.dbQuery('SELECT COUNT(*) as count, COALESCE(SUM(size), 0) as total FROM "FileObject" WHERE "isFolder" = 0', []),
+        window.electronAPI.dbQuery(
+          user?.email
+            ? 'SELECT COUNT(*) as count FROM "Bucket" WHERE "userId" = $1'
+            : 'SELECT COUNT(*) as count FROM "Bucket"',
+          user?.email ? [user.email] : []
+        ),
+        window.electronAPI.dbQuery(
+          user?.email
+            ? 'SELECT COUNT(*) as count, COALESCE(SUM(size), 0) as total FROM "FileObject" WHERE "isFolder" = 0 AND "userId" = $1'
+            : 'SELECT COUNT(*) as count, COALESCE(SUM(size), 0) as total FROM "FileObject" WHERE "isFolder" = 0',
+          user?.email ? [user.email] : []
+        ),
         window.electronAPI.getLocalSyncActivities(null),
         window.electronAPI.getSyncConfigs(),
       ]);
@@ -254,7 +264,7 @@ export default function DashboardPage() {
           </div>
           <div className="flex-1 min-w-0">
             <p className="text-white font-bold text-base truncate">
-              {user?.name || user?.email || 'CloudVault Agent'}
+              {user?.name || user?.email || 'Datadock Agent'}
             </p>
             <p className="text-slate-400 text-xs mt-0.5 truncate">{user?.email || 'Logged in'}</p>
           </div>
