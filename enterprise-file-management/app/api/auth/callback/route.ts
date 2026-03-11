@@ -3,6 +3,7 @@ import { jwtDecode } from "jwt-decode";
 import prisma from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { extractIpFromRequest, validateUserIpAccess } from "@/lib/ip-whitelist";
+import { getHubTenantId } from "@/lib/hub-tenant";
 
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
@@ -90,32 +91,27 @@ export async function GET(request: NextRequest) {
     // Upsert user in db
     let user;
     try {
-      let existingUser = await prisma.user.findUnique({
-        where: { email },
-      });
+      let existingUser = await prisma.user.findFirst({ where: { email } });
 
       if (existingUser) {
         user = await prisma.user.update({
-          where: { email },
+          where: { id: existingUser.id },
           data: { hasLoggedIn: true },
-          include: {
-            teams: {
-              include: { team: true },
-            },
-          },
+          include: { teams: { include: { team: true } } },
         });
       } else {
+        // No tenantId in token → anchor to hub tenant (pending assignment)
+        const tenantId = (decoded["custom:tenantId"] as string | undefined)
+          ?? await getHubTenantId();
+
         user = await prisma.user.create({
           data: {
             email,
             role: defaultRole as any,
+            tenantId,
             hasLoggedIn: true,
           },
-          include: {
-            teams: {
-              include: { team: true },
-            },
-          },
+          include: { teams: { include: { team: true } } },
         });
       }
 
@@ -144,7 +140,10 @@ export async function GET(request: NextRequest) {
       console.error("Local user sync err (SSO):", prismaErr);
     }
 
-    const response = NextResponse.redirect(new URL("/", request.url));
+    const hubTenantId = await getHubTenantId();
+    const isPending = user && user.tenantId === hubTenantId && user.role !== "PLATFORM_ADMIN";
+    const redirectTo = isPending ? "/pending-assignment" : "/";
+    const response = NextResponse.redirect(new URL(redirectTo, request.url));
 
     response.cookies.set({
       name: "accessToken",

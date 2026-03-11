@@ -11,6 +11,7 @@ import {
   RefreshCw,
   Download,
 } from "lucide-react";
+import { getCurrentUser } from "@/lib/session";
 import { CostChart } from "@/components/audit/cost-chart";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
@@ -87,9 +88,10 @@ export default async function AuditPage(props: {
   const page = parseInt(pageParam, 10) || 1;
   const tenantId = typeof searchParams.tenantId === 'string' ? searchParams.tenantId : undefined;
 
-  const [result, tenantsResult] = await Promise.all([
+  const [result, tenantsResult, user] = await Promise.all([
     getAuditLogs({ action, timeRange, dateFrom, dateTo, page, limit: 10, tenantId }),
     getTenantsForFilter().catch(() => ({ success: false as const, error: "Failed" })),
+    getCurrentUser(),
   ]);
   const logs = result.success ? (result.data as any[]) : [];
   const pagination = result.success ? (result as any).pagination : null;
@@ -124,7 +126,7 @@ export default async function AuditPage(props: {
 
      
               <div className="flex items-center justify-between gap-4 flex-wrap">
-                <AuditFilters tenants={tenants} />
+                <AuditFilters tenants={tenants} userRole={user?.role} />
                 <div className="flex items-center gap-2">
                   <AuditRefreshButton />
                   <ExportCsvButton logs={logs} />

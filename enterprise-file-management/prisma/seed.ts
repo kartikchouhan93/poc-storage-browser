@@ -33,7 +33,19 @@ async function main() {
   console.log("\n🌱 Seeding platform admin...\n");
 
   const email = "admin@fms.com";
-  const existing = await prisma.user.findUnique({ where: { email } });
+
+  // Ensure a hub tenant exists for the platform admin
+  let hubTenant = await prisma.tenant.findFirst({ where: { isHubTenant: true } });
+  if (!hubTenant) {
+    hubTenant = await prisma.tenant.create({
+      data: { name: "Platform Hub", isHubTenant: true },
+    });
+    console.log(`  ✅ Created hub tenant: ${hubTenant.id}`);
+  }
+
+  const existing = await prisma.user.findFirst({
+    where: { email, tenantId: hubTenant.id },
+  });
 
   if (existing) {
     console.log(`  ⏭️  Platform admin already exists: ${email}`);
@@ -43,6 +55,7 @@ async function main() {
         email,
         name: "Platform Admin",
         role: "PLATFORM_ADMIN",
+        tenantId: hubTenant.id,
       },
     });
     console.log(`  ✅ Created platform admin: ${email}`);

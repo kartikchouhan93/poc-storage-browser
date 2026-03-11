@@ -10,6 +10,14 @@ import { useAuth } from '@/components/providers/AuthProvider';
 import { Eye, EyeOff } from 'lucide-react';
 
 export default function LoginPage() {
+    return (
+        <React.Suspense fallback={<div className="flex h-screen items-center justify-center bg-slate-50 dark:bg-slate-900">Loading...</div>}>
+            <LoginForm />
+        </React.Suspense>
+    );
+}
+
+function LoginForm() {
     const { login } = useAuth();
     const [email, setEmail] = React.useState('');
     const [password, setPassword] = React.useState('');
@@ -97,7 +105,9 @@ export default function LoginPage() {
                             };
                             // If the login was triggered by the Electron SSO button, redirect
                             // back to /api/auth/agent-sso so it can issue the cloudvault:// link
-                            const dest = redirectAfterLogin || (data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
+                            const dest = data.pendingAssignment
+                                ? '/pending-assignment'
+                                : redirectAfterLogin || (data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');
                             login(data.accessToken, userData, dest);
                         } else {
                             router.push(data.role === 'PLATFORM_ADMIN' ? '/superadmin' : '/');

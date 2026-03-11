@@ -83,23 +83,19 @@ model FileObject {
 
 model User {
   id          String           @id @default(cuid())
-  cognitoSub  String?          @unique
-  email       String           @unique
+  cognitoSub  String?
+  email       String
   password    String?
   name        String?
   role        Role             @default(TEAMMATE)
-  tenantId    String?
-  themeMode   String           @default("system")
-  themeColor  String           @default("blue")
-  themeFont   String           @default("inter")
-  themeRadius String           @default("0.3")
+  tenantId    String
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
   hasLoggedIn Boolean          @default(false)
   isActive    Boolean          @default(true)
   auditLogs   AuditLog[]
   policies    ResourcePolicy[]
-  tenant      Tenant?          @relation(fields: [tenantId], references: [id])
+  tenant      Tenant           @relation(fields: [tenantId], references: [id])
   teams       TeamMembership[]
 
   // Auditing back-references (required by named relations on other models)
@@ -117,6 +113,10 @@ model User {
   sharesUpdated    Share[]           @relation("ShareUpdatedBy")
   multipartUploads MultipartUpload[]
   botIdentities    BotIdentity[]
+
+  @@unique([email, tenantId])
+  @@index([cognitoSub])
+  @@index([email])
 }
 
 model ResourcePolicy {
@@ -144,6 +144,8 @@ model AuditLog {
   details       String?
   status        String
   ipAddress     String?
+  country       String?
+  region        String?
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
   createdBy     String?

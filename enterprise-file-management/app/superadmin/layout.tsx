@@ -1,6 +1,7 @@
 import { redirect } from 'next/navigation';
 import { getCurrentUser } from '@/lib/session';
 import Link from 'next/link';
+import { LogoutButton } from '@/components/superadmin/logout-button';
 
 export default async function SuperAdminLayout({
   children,
@@ -18,8 +19,12 @@ export default async function SuperAdminLayout({
         <nav className="flex flex-col gap-2">
           <Link href="/superadmin" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Dashboard</Link>
           <Link href="/superadmin/tenants" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Tenants</Link>
+          <Link href="/superadmin/users" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">User Management</Link>
           <Link href="/superadmin/audit-logs" className="px-3 py-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-md text-sm font-medium">Audit Logs</Link>
         </nav>
+        <div className="mt-auto pt-6 flex flex-col">
+          <LogoutButton />
+        </div>
       </aside>
       <main className="flex-1 overflow-auto p-8">
         {children}

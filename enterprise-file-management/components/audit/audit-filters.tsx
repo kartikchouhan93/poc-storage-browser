@@ -13,7 +13,13 @@ import { format } from "date-fns";
 import { DateRange } from "react-day-picker";
 import { cn } from "@/lib/utils";
 
-export function AuditFilters({ tenants = [] }: { tenants?: { id: string; name: string }[] }) {
+export function AuditFilters({ 
+  tenants = [] ,
+  userRole
+}: { 
+  tenants?: { id: string; name: string }[],
+  userRole?: string 
+}) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -102,7 +108,7 @@ export function AuditFilters({ tenants = [] }: { tenants?: { id: string; name: s
   return (
     <div className="flex items-center gap-4 flex-wrap">
       <div className="flex items-center gap-2">
-        {tenants.length > 0 && (
+        {userRole === "PLATFORM_ADMIN" && tenants.length > 0 && (
           <Popover open={tenantOpen} onOpenChange={setTenantOpen}>
             <PopoverTrigger asChild>
               <Button

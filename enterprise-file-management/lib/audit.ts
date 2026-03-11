@@ -1,4 +1,5 @@
 import prisma from "@/lib/prisma";
+import { resolveGeo } from "@/lib/geo";
 
 export type AuditAction =
   | "FILE_UPLOAD"
@@ -20,12 +21,19 @@ export type AuditAction =
   | "PERMISSION_ADDED"
   | "PERMISSION_REMOVED"
   | "USER_INVITED"
+  | "USER_UPDATED"
+  | "USER_DELETED"
   | "LOGIN"
   | "LOGOUT"
   | "IP_ACCESS_DENIED"
+  | "BUCKET_CREATE"
+  | "BUCKET_DELETE"
   | "TENANT_CREATED"
+  | "TENANT_UPDATED"
   | "TENANT_DELETED"
-  | "AGENT_CREDENTIALS_REQUESTED";
+  | "AGENT_CREDENTIALS_REQUESTED"
+  | "USER_ASSIGNED_TENANT"
+  | "USER_REMOVED_TENANT";
 
 export type AuditStatus = "SUCCESS" | "FAILED";
 
@@ -51,8 +59,21 @@ export function logAudit(params: AuditParams): void {
     params;
 
   // Run asynchronously in the background — never blocks the caller
-  prisma.auditLog
-    .create({
+  (async () => {
+    let country: string | null = null;
+    let region: string | null = null;
+
+    if (ipAddress) {
+      try {
+        const geo = await resolveGeo(ipAddress);
+        country = geo.country;
+        region = geo.region;
+      } catch {
+        // Geo failure must never block the audit write
+      }
+    }
+
+    await prisma.auditLog.create({
       data: {
         userId,
         action,
@@ -60,11 +81,13 @@ export function logAudit(params: AuditParams): void {
         details: details ? JSON.stringify(details) : null,
         status,
         ipAddress,
+        country,
+        region,
         ...(userId ? { createdBy: userId, updatedBy: userId } : {}),
       },
-    })
-    .catch((err) => {
-      // Silent fail — audit must never crash the main request
-      console.error("[audit] Failed to write audit log:", err);
     });
+  })().catch((err) => {
+    // Silent fail — audit must never crash the main request
+    console.error("[audit] Failed to write audit log:", err);
+  });
 }

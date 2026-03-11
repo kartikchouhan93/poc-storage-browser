@@ -55,16 +55,48 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     const CONCURRENCY = 3;
 
     const addFiles = (newFiles: File[], bucketId: string, parentId: string | null) => {
-        const uploadFiles: UploadFile[] = newFiles.map((f, i) => ({
-            id: `upload-${Date.now()}-${i}`,
-            name: f.name,
-            size: f.size,
-            progress: 0,
-            status: "pending",
-            file: f,
-            bucketId,
-            parentId
-        }))
+        const directories = new Set<string>();
+
+        const uploadFiles: UploadFile[] = newFiles.map((f, i) => {
+            const pathName = f.webkitRelativePath || f.name;
+            if (f.webkitRelativePath) {
+                const parts = f.webkitRelativePath.split('/');
+                let currentPath = "";
+                for (let j = 0; j < parts.length - 1; j++) {
+                    currentPath = currentPath ? `${currentPath}/${parts[j]}` : parts[j];
+                    directories.add(currentPath);
+                }
+            }
+
+            return {
+                id: `upload-${Date.now()}-${i}`,
+                name: pathName,
+                size: f.size,
+                progress: 0,
+                status: "pending",
+                file: f,
+                bucketId,
+                parentId
+            };
+        });
+
+        // Explicitly create 0-byte folder objects in S3
+        Array.from(directories).forEach(async (dir) => {
+            try {
+                await fetchWithAuth('/api/files', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        name: dir,
+                        isFolder: true,
+                        bucketId,
+                        parentId
+                    })
+                });
+            } catch (err) {
+                console.error("Failed to pre-create folder", dir, err);
+            }
+        });
 
         setFiles((prev) => [...prev, ...uploadFiles])
         setIsIndicatorOpen(true)
@@ -167,7 +199,11 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             }
 
             setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'complete', progress: 100 } : f))
-            toast.success(`Uploaded ${fileItem.name}`, { duration: 2000 })
+            toast.success(`Uploaded ${fileItem.name}`, { 
+                description: 'Processing... The file will appear shortly.',
+                duration: 10000,
+                position: 'top-right'
+            })
 
         } catch (error) {
             // Do not show error toasters if the user intentionally cancelled or paused but an error threw
@@ -176,7 +212,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             }
             console.error(error)
             setFiles(prev => prev.map(f => f.id === fileItem.id ? { ...f, status: 'error', progress: 0 } : f))
-            toast.error(`Failed to upload ${fileItem.name}`, { duration: 2000 })
+            toast.error(`Failed to upload ${fileItem.name}`, { 
+                duration: 5000,
+                position: 'top-right'
+            })
         } finally {
             setIsProcessing(false) // Trigger effect to pick up next file
         }

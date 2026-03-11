@@ -19,6 +19,10 @@ import { logAudit } from "@/lib/audit";
 import { verifyBotToken } from "@/lib/bot-auth";
 import { STSClient, GetCallerIdentityCommand } from "@aws-sdk/client-sts";
 import { fromNodeProviderChain } from "@aws-sdk/credential-providers";
+// Note: withTenantAccess is imported but agent/credentials uses Bearer token auth
+// (bot HS256 + Cognito RS256), not session cookies. Tenant isolation is enforced
+// internally by scoping credentials to the resolved tenantId from the token.
+import { withTenantAccess } from "@/lib/middleware/tenant-access";
 
 export async function POST(request: NextRequest) {
   try {
@@ -66,7 +70,7 @@ export async function POST(request: NextRequest) {
         );
       }
 
-      const user = await prisma.user.findUnique({ where: { email } });
+      const user = await prisma.user.findFirst({ where: { email } });
       if (!user || !user.isActive) {
         return NextResponse.json(
           { error: "User not found or inactive" },

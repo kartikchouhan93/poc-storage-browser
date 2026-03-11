@@ -508,6 +508,11 @@ new aws.iam.RolePolicyAttachment("file-sync-lambda-basic", {
   policyArn: "arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole",
 });
 
+new aws.iam.RolePolicyAttachment("file-sync-lambda-s3", {
+  role: lambdaRole.name,
+  policyArn: "arn:aws:iam::aws:policy/AmazonS3FullAccess",
+});
+
 // Inline policy: SQS consume + cross-account STS AssumeRole for BYOA HeadObject
 new aws.iam.RolePolicy("file-sync-lambda-sqs-policy", {
   role: lambdaRole.name,

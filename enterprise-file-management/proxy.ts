@@ -4,7 +4,9 @@ import { jwtVerify } from "jose";
 import { verifyToken } from "@/lib/token";
 
 const BOT_JWT_SECRET = new TextEncoder().encode(
-  process.env.BOT_JWT_SECRET || process.env.ENCRYPTION_KEY || "bot-secret-change-me",
+  process.env.BOT_JWT_SECRET ||
+    process.env.ENCRYPTION_KEY ||
+    "bot-secret-change-me",
 );
 
 async function verifyBotToken(token: string) {
@@ -67,9 +69,18 @@ export async function proxy(request: NextRequest) {
   if (!token) {
     // If it's an API route, return 401
     if (pathname.startsWith("/api")) {
-      console.error(
-        `[Middleware Error] Unauthorized access to API: ${pathname}. Reason: Missing Token in Headers/Cookies.`,
-      );
+      const isScan =
+        pathname.includes("phpunit") ||
+        pathname.includes(".php") ||
+        pathname.includes("vendor");
+
+      if (isScan) {
+        console.warn(`[Middleware Scan Blocked] Path: ${pathname}`);
+      } else {
+        console.warn(
+          `[Middleware Error] Unauthorized access to API: ${pathname}. Reason: Missing Token in Headers/Cookies.`,
+        );
+      }
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
     // If it's a page, redirect to login
@@ -81,10 +92,15 @@ export async function proxy(request: NextRequest) {
   if (botPayload) {
     const requestHeaders = new Headers(request.headers);
     if (!authHeader) requestHeaders.set("Authorization", `Bearer ${token}`);
-    const response = NextResponse.next({ request: { headers: requestHeaders } });
+    const response = NextResponse.next({
+      request: { headers: requestHeaders },
+    });
     response.headers.set("x-user-id", botPayload.sub as string);
     response.headers.set("x-user-role", "BOT");
-    response.headers.set("x-user-tenant", (botPayload.tenantId as string) ?? "");
+    response.headers.set(
+      "x-user-tenant",
+      (botPayload.tenantId as string) ?? "",
+    );
     return response;
   }
 
@@ -92,7 +108,7 @@ export async function proxy(request: NextRequest) {
 
   if (!payload) {
     if (pathname.startsWith("/api")) {
-      console.error(
+      console.warn(
         `[Middleware Error] Unauthorized access to API: ${pathname}. Reason: Invalid/Expired Token.`,
       );
       return NextResponse.json({ error: "Invalid Token" }, { status: 401 });

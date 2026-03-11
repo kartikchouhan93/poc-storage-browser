@@ -139,6 +139,7 @@ import { useDownload } from "@/components/providers/download-provider";
 import { useUpload } from "@/components/providers/upload-provider";
 import { ShareModal } from "@/components/share-modal";
 import { FileViewer } from "./file-viewer";
+import { DateRangePicker } from "@/components/ui/date-range-picker";
 
 // ...
 
@@ -167,17 +168,18 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
   const [fileToView, setFileToView] = React.useState<any>(null)
   const [page, setPage] = React.useState(1)
   const [pagination, setPagination] = React.useState<any>(null)
+  const [dateRange, setDateRange] = React.useState<{ from?: Date; to?: Date }>({})
   const limit = 10
 
   const currentParentId = path.length > 0 ? path[path.length - 1].id : null
 
-  const fetchFiles = React.useCallback(async () => {
+  const fetchFiles = React.useCallback(async (isBackground = false) => {
     if (!bucketId) {
       setFiles([])
-      setLoading(false)
+      if (!isBackground) setLoading(false)
       return
     }
-    setLoading(true)
+    if (!isBackground) setLoading(true)
     try {
       const params = new URLSearchParams()
       params.append('bucketId', bucketId)
@@ -187,6 +189,8 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
       params.append('limit', limit.toString())
       params.append('sortBy', sortKey)
       params.append('sortOrder', sortOrder)
+      if (dateRange.from) params.append('dateFrom', dateRange.from.toISOString())
+      if (dateRange.to) params.append('dateTo', dateRange.to.toISOString())
 
       const res = await fetchWithAuth(`/api/file-explorer?${params.toString()}`)
       if (res.ok) {
@@ -199,14 +203,14 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
           setPagination(null)
         }
       } else {
-        toast.error("Failed to fetch files")
+        if (!isBackground) toast.error("Failed to fetch files")
       }
     } catch (error) {
-      toast.error("Failed to fetch files")
+      if (!isBackground) toast.error("Failed to fetch files")
     } finally {
-      setLoading(false)
+      if (!isBackground) setLoading(false)
     }
-  }, [bucketId, currentParentId, searchQuery, page, limit, sortKey, sortOrder])
+  }, [bucketId, currentParentId, searchQuery, page, limit, sortKey, sortOrder, dateRange])
 
   // Permission Check
   // We can check permissions on a per-file basis using the file's bucketId
@@ -222,6 +226,17 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
     fetchFiles()
     setSelected(new Set())
   }, [fetchFiles, refreshTrigger, searchQuery, page, sortKey, sortOrder])
+
+  // Background Auto-Refresh every 5 seconds when in a bucket
+  React.useEffect(() => {
+    if (!bucketId) return;
+
+    const interval = setInterval(() => {
+      fetchFiles(true);
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [fetchFiles, bucketId]);
 
   // Sorting
   const currentFiles = files; // Sorting is now done on the backend
@@ -573,8 +588,17 @@ export function FileBrowser({ bucketId, onUploadClick, onNewFolderClick, path, s
         </div>
       </div>
 
-      <div className="w-full max-w-sm">
-        <SearchInput value={searchQuery} onChange={(v: string) => { setSearchQuery(v); setPage(1); }} />
+      <div className="flex items-center gap-2 flex-wrap">
+        <div className="w-full max-w-sm">
+          <SearchInput value={searchQuery} onChange={(v: string) => { setSearchQuery(v); setPage(1); }} />
+        </div>
+        {bucketId && (
+          <DateRangePicker
+            dateRange={dateRange}
+            onDateRangeChange={(range) => { setDateRange(range); setPage(1); }}
+            placeholder="Filter by date"
+          />
+        )}
       </div>
 
       {/* Selected count */}

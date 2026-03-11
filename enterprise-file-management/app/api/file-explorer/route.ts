@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
 
     let user: any = null;
     if (botAuth) {
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: botAuth.email },
         include: {
           policies: true,
@@ -33,7 +33,7 @@ export async function GET(request: NextRequest) {
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: payload.email as string },
         include: {
           policies: true,
@@ -76,10 +76,19 @@ export async function GET(request: NextRequest) {
     const limitParam = searchParams.get("limit") || "10";
     const sortBy = searchParams.get("sortBy") || "name";
     const sortOrder = searchParams.get("sortOrder") || "asc";
+    const dateFromParam = searchParams.get("dateFrom");
+    const dateToParam = searchParams.get("dateTo");
 
     const page = parseInt(pageParam, 10) || 1;
     const limit = parseInt(limitParam, 10) || 10;
     const skip = (page - 1) * limit;
+
+    // Parse date range filters — ignore invalid date strings gracefully
+    const dateFrom = dateFromParam ? new Date(dateFromParam) : null;
+    const dateTo = dateToParam ? new Date(dateToParam) : null;
+    const validDateFrom =
+      dateFrom && !isNaN(dateFrom.getTime()) ? dateFrom : null;
+    const validDateTo = dateTo && !isNaN(dateTo.getTime()) ? dateTo : null;
 
     let allowedBucketIds: string[] = [];
 
@@ -143,6 +152,13 @@ export async function GET(request: NextRequest) {
     const whereClause: any = {
       bucketId: { in: allowedBucketIds },
     };
+
+    // Apply date range filter on updatedAt
+    if (validDateFrom || validDateTo) {
+      whereClause.updatedAt = {};
+      if (validDateFrom) whereClause.updatedAt.gte = validDateFrom;
+      if (validDateTo) whereClause.updatedAt.lte = validDateTo;
+    }
 
     if (search && search.trim() !== "") {
       // ------------------------------------------------------------------
@@ -257,7 +273,9 @@ export async function GET(request: NextRequest) {
             : f.mimeType?.includes("pdf") ||
                 (f.name as string).toLowerCase().endsWith(".pdf")
               ? "pdf"
-              : "document",
+              : (f.name as string).toLowerCase().endsWith(".json")
+                ? "code"
+                : "document",
         size: Number(f.size) || 0,
         modifiedAt: f.updatedAt.toISOString(),
         owner: "Admin", // Placeholder as per logic

@@ -12,15 +12,23 @@ export async function GET(
   { params }: { params: Promise<{ id: string }> },
 ) {
   const user = await getCurrentUser();
-  if (!user) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  if (!user)
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const { id } = await params;
   const bucket = await prisma.bucket.findUnique({
     where: { id },
-    select: { id: true, name: true, region: true, tenantId: true, awsAccountId: true },
+    select: {
+      id: true,
+      name: true,
+      region: true,
+      tenantId: true,
+      awsAccountId: true,
+    },
   });
 
-  if (!bucket) return NextResponse.json({ error: "Not found" }, { status: 404 });
+  if (!bucket)
+    return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (bucket.tenantId !== user.tenantId && user.role !== Role.PLATFORM_ADMIN)
     return NextResponse.json({ error: "Forbidden" }, { status: 403 });
 
@@ -130,7 +138,8 @@ export async function DELETE(
     // Teardown EventBridge rule in tenant account (non-fatal)
     if (awsAccount && bucket.eventBridgeRuleArn) {
       try {
-        const { teardownBucketEventBridge } = await import("@/lib/aws/setup-bucket-events");
+        const { teardownBucketEventBridge } =
+          await import("@/lib/aws/setup-bucket-events");
         await teardownBucketEventBridge(
           {
             roleArn: awsAccount.roleArn,
@@ -153,7 +162,7 @@ export async function DELETE(
 
     logAudit({
       userId: user.id,
-      action: "BUCKET_DELETE" as any,
+      action: "BUCKET_DELETE",
       resource: "Bucket",
       resourceId: bucket.id,
       status: "SUCCESS",

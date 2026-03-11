@@ -19,11 +19,14 @@ export async function POST(request: NextRequest) {
 
     let user: any = null;
     if (botAuth) {
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: botAuth.email },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     } else {
@@ -31,11 +34,14 @@ export async function POST(request: NextRequest) {
       if (!payload || typeof payload !== "object" || !payload.email)
         return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-      user = await prisma.user.findUnique({
+      user = await prisma.user.findFirst({
         where: { email: payload.email as string },
         include: {
           policies: true,
-          teams: { where: { isDeleted: false }, include: { team: { include: { policies: true } } } },
+          teams: {
+            where: { isDeleted: false },
+            include: { team: { include: { policies: true } } },
+          },
         },
       });
     }
@@ -63,8 +69,10 @@ export async function POST(request: NextRequest) {
 
     // ── Bot: validate bucket + UPLOAD permission ──────────────────────────
     if (botAuth) {
-      if (!assertBotBucketAccess(botAuth, bucketId, "UPLOAD") &&
-          !assertBotBucketAccess(botAuth, bucketId, "WRITE")) {
+      if (
+        !assertBotBucketAccess(botAuth, bucketId, "UPLOAD") &&
+        !assertBotBucketAccess(botAuth, bucketId, "WRITE")
+      ) {
         return NextResponse.json(
           { error: "Forbidden: bot lacks UPLOAD access to this bucket" },
           { status: 403 },

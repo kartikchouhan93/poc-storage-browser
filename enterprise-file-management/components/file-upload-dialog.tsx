@@ -47,16 +47,16 @@ export function FileUploadDialog({ open, onOpenChange, bucketId, currentPath }: 
   const [selectedFiles, setSelectedFiles] = React.useState<File[]>([])
   const [isDragging, setIsDragging] = React.useState(false)
   const fileInputRef = React.useRef<HTMLInputElement>(null)
+  const folderInputRef = React.useRef<HTMLInputElement>(null)
 
   const handleAddFiles = (fileList: FileList | null) => {
     if (!fileList) return
     const newFiles = Array.from(fileList)
     setSelectedFiles((prev) => [...prev, ...newFiles])
 
-    // Reset file input to allow re-selecting the same file
-    if (fileInputRef.current) {
-      fileInputRef.current.value = ""
-    }
+    // Reset file inputs to allow re-selecting the same file/folder
+    if (fileInputRef.current) fileInputRef.current.value = ""
+    if (folderInputRef.current) folderInputRef.current.value = ""
   }
 
   const removeFile = (index: number) => {
@@ -69,7 +69,10 @@ export function FileUploadDialog({ open, onOpenChange, bucketId, currentPath }: 
 
     if (bucketId) {
       addFiles(selectedFiles, bucketId, parentId)
-      toast.success("Uploads started in background", { duration: 2000 })
+      toast.success("Uploads started in background", { 
+        duration: 3000,
+        position: 'top-right'
+      })
       handleClose(false)
     }
   }
@@ -124,28 +127,45 @@ export function FileUploadDialog({ open, onOpenChange, bucketId, currentPath }: 
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
             onDrop={handleDrop}
-            onClick={() => fileInputRef.current?.click()}
-            className={`flex flex-col items-center justify-center gap-2 rounded-lg border-2 border-dashed p-8 cursor-pointer transition-colors ${isDragging
+            className={`flex flex-col items-center justify-center gap-4 rounded-lg border-2 border-dashed p-8 transition-colors ${isDragging
               ? "border-primary bg-primary/5"
               : "border-border hover:border-muted-foreground/50"
               }`}
           >
-            <CloudUpload
-              className={`h-10 w-10 ${isDragging ? "text-primary" : "text-muted-foreground"
-                }`}
-            />
-            <div className="text-center">
-              <p className="text-sm font-medium">
-                {isDragging ? "Drop files here" : "Click to browse or drag files here"}
-              </p>
-              <p className="text-xs text-muted-foreground mt-1">
-                Supports any file type up to 5 GB
-              </p>
+            <div className="flex flex-col items-center gap-2 text-center pointer-events-none">
+              <CloudUpload
+                className={`h-10 w-10 ${isDragging ? "text-primary" : "text-muted-foreground"}`}
+              />
+              <div>
+                <p className="text-sm font-medium">
+                  {isDragging ? "Drop files & folders here" : "Drag files & folders here"}
+                </p>
+                <p className="text-xs text-muted-foreground mt-1 mb-2">
+                  Supports any file type up to 5 GB
+                </p>
+              </div>
             </div>
+
+            <div className="flex gap-3">
+              <Button type="button" variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} className="cursor-pointer">
+                Browse Files
+              </Button>
+              <Button type="button" variant="secondary" size="sm" onClick={() => folderInputRef.current?.click()} className="cursor-pointer">
+                Browse Folders
+              </Button>
+            </div>
+
             <input
               ref={fileInputRef}
               type="file"
               multiple
+              className="hidden"
+              onChange={(e) => handleAddFiles(e.target.files)}
+            />
+            <input
+              ref={folderInputRef}
+              type="file"
+              {...{ webkitdirectory: "" }}
               className="hidden"
               onChange={(e) => handleAddFiles(e.target.files)}
             />
@@ -163,8 +183,8 @@ export function FileUploadDialog({ open, onOpenChange, bucketId, currentPath }: 
                     <File className="h-4 w-4 text-muted-foreground shrink-0" />
                     <div className="min-w-0 space-y-1">
                       <div className="flex items-center justify-between gap-2 w-full">
-                        <p className="text-sm font-medium truncate">
-                          {file.name}
+                        <p className="text-sm font-medium truncate" title={file.webkitRelativePath || file.name}>
+                          {file.webkitRelativePath || file.name}
                         </p>
                         <span className="text-xs text-muted-foreground shrink-0 whitespace-nowrap">
                           {formatBytes(file.size)}

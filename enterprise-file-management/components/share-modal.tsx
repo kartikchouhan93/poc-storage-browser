@@ -1,6 +1,8 @@
 "use client"
 
 import * as React from "react"
+import { addDays, format, startOfDay } from "date-fns"
+import { CalendarIcon } from "lucide-react"
 import {
   Dialog,
   DialogContent,
@@ -12,8 +14,11 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
+import { Calendar } from "@/components/ui/calendar"
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover"
 import { toast } from "sonner"
 import { Copy } from "lucide-react"
+import { cn } from "@/lib/utils"
 
 interface ShareModalProps {
   open: boolean
@@ -21,18 +26,25 @@ interface ShareModalProps {
   file: any
 }
 
+function getDefaultExpiryDate(): Date {
+  return addDays(startOfDay(new Date()), 7)
+}
+
 export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
   const [loading, setLoading] = React.useState(false)
   const [toEmail, setToEmail] = React.useState("")
-  const [expiryDays, setExpiryDays] = React.useState("7")
+  const [expiryDate, setExpiryDate] = React.useState<Date>(getDefaultExpiryDate)
   const [downloadLimit, setDownloadLimit] = React.useState("5")
   const [password, setPassword] = React.useState("")
   const [shareUrl, setShareUrl] = React.useState("")
 
+  const tomorrow = addDays(startOfDay(new Date()), 1)
+  const maxDate = addDays(startOfDay(new Date()), 365)
+
   React.useEffect(() => {
     if (open) {
       setToEmail("")
-      setExpiryDays("7")
+      setExpiryDate(getDefaultExpiryDate())
       setDownloadLimit("5")
       setPassword("")
       setShareUrl("")
@@ -50,7 +62,7 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
         body: JSON.stringify({
           fileId: file.id,
           toEmail,
-          expiryDays: parseInt(expiryDays, 10),
+          expiryDate: format(expiryDate, "yyyy-MM-dd"),
           downloadLimit: parseInt(downloadLimit, 10),
           password
         })
@@ -78,7 +90,7 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
         <DialogHeader>
-          <DialogTitle>Share "{file?.name}"</DialogTitle>
+          <DialogTitle>Share &quot;{file?.name}&quot;</DialogTitle>
           <DialogDescription>
             Create a secure access link and email it to the recipient.
           </DialogDescription>
@@ -115,15 +127,34 @@ export function ShareModal({ open, onOpenChange, file }: ShareModalProps) {
             
             <div className="grid grid-cols-2 gap-4">
               <div className="grid gap-2">
-                <Label htmlFor="expiryDays">Valid For (Days)*</Label>
-                <Input
-                  id="expiryDays"
-                  type="number"
-                  min="1"
-                  max="365"
-                  value={expiryDays}
-                  onChange={(e) => setExpiryDays(e.target.value)}
-                />
+                <Label>Expiry Date*</Label>
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button
+                      variant="outline"
+                      className={cn(
+                        "w-full justify-start text-left font-normal",
+                        !expiryDate && "text-muted-foreground"
+                      )}
+                    >
+                      <CalendarIcon className="mr-2 h-4 w-4" />
+                      {expiryDate ? format(expiryDate, "PPP") : "Pick a date"}
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent className="w-auto p-0" align="start">
+                    <Calendar
+                      mode="single"
+                      selected={expiryDate}
+                      onSelect={(date) => {
+                        if (date) setExpiryDate(date)
+                      }}
+                      disabled={(date) =>
+                        date < tomorrow || date > maxDate
+                      }
+                      defaultMonth={expiryDate}
+                    />
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="grid gap-2">
                 <Label htmlFor="downloadLimit">Download Limit*</Label>

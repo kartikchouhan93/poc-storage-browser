@@ -15,7 +15,7 @@ export async function POST(request: NextRequest) {
     if (!payload || typeof payload !== "object" || !payload.email)
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-    const user = await prisma.user.findUnique({
+    const user = await prisma.user.findFirst({
       where: { email: payload.email as string },
       include: {
         policies: true,
@@ -73,11 +73,7 @@ export async function POST(request: NextRequest) {
     }
 
     try {
-      const s3 = await getS3Client(
-        null,
-        bucket.region,
-        bucket.awsAccount,
-      );
+      const s3 = await getS3Client(null, bucket.region, bucket.awsAccount);
 
       // We need to fetch all parts. Pagination might be needed if parts > 1000
       let parts: any[] = [];

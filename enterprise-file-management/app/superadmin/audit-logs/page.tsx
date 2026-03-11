@@ -30,10 +30,16 @@ export default async function SuperAdminAuditLogsPage(props: {
   const dateTo = typeof searchParams.dateTo === 'string' ? searchParams.dateTo : undefined;
   const pageParam = typeof searchParams.page === 'string' ? searchParams.page : '1';
   const page = parseInt(pageParam, 10) || 1;
+  const tenantId = typeof searchParams.tenantId === 'string' ? searchParams.tenantId : undefined;
 
-  const result = await getAuditLogs({ action, timeRange, dateFrom, dateTo, page, limit: 10 });
+  const [result, tenantsResult] = await Promise.all([
+    getAuditLogs({ action, timeRange, dateFrom, dateTo, page, limit: 10, tenantId }),
+    import("@/app/actions/tenants").then((m) => m.getTenantsForFilter().catch(() => ({ success: false as const, error: "Failed" }))),
+  ]);
+  
   const logs = result.success ? (result.data as any[]) : [];
   const pagination = result.success ? (result as any).pagination : null;
+  const tenants = tenantsResult.success ? (tenantsResult as any).data : [];
 
   return (
     <>
@@ -59,7 +65,7 @@ export default async function SuperAdminAuditLogsPage(props: {
           </div>
 
           <div className="flex items-center justify-between gap-4 flex-wrap">
-            <AuditFilters />
+            <AuditFilters tenants={tenants} userRole={user?.role} />
             <div className="flex items-center gap-2">
               <AuditRefreshButton />
               <ExportCsvButton logs={logs} />

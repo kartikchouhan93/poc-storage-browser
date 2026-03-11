@@ -12,3 +12,6 @@ node_modules/
 .env
 *.zip
 .kiro/*
+
+# GeoLite2 database (provisioned separately)
+data/GeoLite2-City.mmdb

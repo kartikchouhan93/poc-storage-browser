@@ -8,10 +8,23 @@ import { createUserWithPasswordInCognito } from "@/lib/auth-service";
 import { logAudit } from "@/lib/audit";
 import { deleteTenantWorker } from "@/lib/workers/tenant-deleter";
 import { getCurrentUser } from "@/lib/session";
+import { extractIpFromHeaders } from "@/lib/ip-whitelist";
 
 export async function getTenants() {
+  const currentUser = await getCurrentUser();
+  if (!currentUser) {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  const where: any = { isHubTenant: false };
+  if (currentUser.role !== "PLATFORM_ADMIN") {
+    // If not platform admin, they can ONLY see their own tenant
+    where.id = currentUser.tenantId;
+  }
+
   try {
     const tenants = await prisma.tenant.findMany({
+      where,
       include: {
         _count: {
           select: { users: true },
@@ -19,8 +32,6 @@ export async function getTenants() {
         awsAccounts: {
           select: { id: true },
         },
-        // We can't easily aggregate storage directly here without more complex queries or a separate view/field
-        // For now, we'll return the tenants and a placeholder for storage
       },
       orderBy: {
         createdAt: "desc",
@@ -120,6 +131,7 @@ export async function createTenant(formData: FormData) {
       resourceId: createdTenant!.id,
       details: { tenantName: name, adminEmail },
       status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath("/tenants");
@@ -149,10 +161,14 @@ export async function deleteTenant(tenantId: string) {
     return { success: false, error: "Tenant not found" };
   }
 
+  const ipAddress = await extractIpFromHeaders();
+
   // Fire-and-forget background worker — same pattern as validateAwsAccount
-  deleteTenantWorker(tenantId, tenant.name, currentUser.id).catch((err) => {
-    console.error("[deleteTenant] Worker error:", err);
-  });
+  deleteTenantWorker(tenantId, tenant.name, currentUser.id, ipAddress).catch(
+    (err) => {
+      console.error("[deleteTenant] Worker error:", err);
+    },
+  );
 
   revalidatePath("/superadmin/tenants");
   return { success: true };
@@ -163,13 +179,60 @@ export async function getTenantsForFilter(): Promise<
   | { success: false; error: string }
 > {
   try {
+    const user = await getCurrentUser();
+    if (!user) return { success: false, error: "Unauthorized" };
+
+    const where: any = { isHubTenant: false };
+
+    // If not platform admin, they can ONLY see their own tenant
+    if (user.role !== "PLATFORM_ADMIN") {
+      where.id = user.tenantId;
+    }
+
     const data = await prisma.tenant.findMany({
+      where,
       select: { id: true, name: true },
       orderBy: { name: "asc" },
     });
     return { success: true, data };
   } catch (error) {
-    console.error("Failed to fetch tenants for filter:", error);
     return { success: false, error: "Failed to fetch tenants" };
+  }
+}
+
+export async function updateTenant(tenantId: string, newName: string) {
+  const currentUser = await getCurrentUser();
+
+  if (!currentUser || currentUser.role !== "PLATFORM_ADMIN") {
+    return { success: false, error: "Unauthorized" };
+  }
+
+  if (!newName || newName.trim() === "") {
+    return { success: false, error: "Tenant name cannot be empty" };
+  }
+
+  try {
+    const tenant = await prisma.tenant.update({
+      where: { id: tenantId },
+      data: { name: newName.trim() },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "TENANT_UPDATED",
+      resource: "Tenant",
+      resourceId: tenant.id,
+      details: { oldName: tenant.name, newName: newName.trim() },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
+    });
+
+    revalidatePath("/superadmin/tenants");
+    revalidatePath(`/superadmin/tenants/${tenantId}`);
+
+    return { success: true, data: { id: tenant.id, name: tenant.name } };
+  } catch (error) {
+    console.error("Failed to update tenant:", error);
+    return { success: false, error: "Failed to update tenant name" };
   }
 }

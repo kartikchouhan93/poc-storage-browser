@@ -3,16 +3,19 @@
 import * as React from "react"
 import { Dialog, DialogContent, DialogTitle, DialogDescription, DialogHeader, DialogFooter } from "@/components/ui/dialog"
 import { Button } from "@/components/ui/button"
-import { Download, ExternalLink, FileText, Loader2, X } from "lucide-react"
+import { Download, ExternalLink, FileText, Loader2, X, AlertTriangle } from "lucide-react"
 
 // Types
 import type { ApiFileItem } from "@/app/(dashboard)/explorer/page"
+import { JsonViewer } from "@/components/json-viewer"
 import { fetchWithAuth } from "@/lib/api"
 import { useAuth } from "@/components/providers/AuthProvider"
 
 // Doc Viewer for Office formats
 import DocViewer, { DocViewerRenderers } from "@cyntler/react-doc-viewer"
 import "@cyntler/react-doc-viewer/dist/index.css";
+
+const JSON_PREVIEW_SIZE_LIMIT = 5 * 1024 * 1024 // 5 MB
 
 interface FileViewerProps {
   file: ApiFileItem | null
@@ -149,6 +152,30 @@ export function FileViewer({ file, open, onOpenChange }: FileViewerProps) {
            <iframe src={`${url}#toolbar=0`} className="w-full h-full" title={name} />
          </div>
        )
+    }
+
+    // JSON file preview
+    if (name.toLowerCase().endsWith('.json')) {
+      if (file!.size > JSON_PREVIEW_SIZE_LIMIT) {
+        return (
+          <div className="flex flex-col items-center justify-center p-16 text-center border rounded-md bg-muted/10 h-64">
+            <AlertTriangle className="h-12 w-12 text-muted-foreground mb-4" />
+            <h3 className="font-semibold text-lg">File too large for preview</h3>
+            <p className="text-sm text-muted-foreground mt-2 mb-6 max-w-sm">
+              This JSON file exceeds the 5 MB inline preview limit. Download it to view on your device.
+            </p>
+            {canDownload && (
+              <Button onClick={handleDownload}>
+                <Download className="mr-2 h-4 w-4" />
+                Download File
+              </Button>
+            )}
+          </div>
+        )
+      }
+      if (textContent !== null) {
+        return <JsonViewer content={textContent} />
+      }
     }
 
     if (textContent !== null) {

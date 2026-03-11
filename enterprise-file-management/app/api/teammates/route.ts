@@ -15,7 +15,7 @@ export async function GET(request: NextRequest) {
 
     const email = payload.email as string;
 
-    const dbUser = await prisma.user.findUnique({
+    const dbUser = await prisma.user.findFirst({
       where: { email },
       select: { tenantId: true },
     });

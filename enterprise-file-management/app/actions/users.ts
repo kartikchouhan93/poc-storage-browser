@@ -13,6 +13,8 @@ import { hashPassword } from "@/lib/auth";
 import { Role } from "@/lib/generated/prisma/client";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { extractIpFromHeaders } from "@/lib/ip-whitelist";
+import { getHubTenantId } from "@/lib/hub-tenant";
 
 export async function getUsers() {
   try {
@@ -21,12 +23,29 @@ export async function getUsers() {
       return { success: false, error: "Unauthorized" };
     }
 
-    let whereClause = {};
-    if (currentUser.role !== "PLATFORM_ADMIN") {
+    let whereClause: any = {
+      tenant: {
+        isHubTenant: false,
+      },
+    };
+
+    const hubTenantId = await getHubTenantId();
+    if (currentUser.role === "PLATFORM_ADMIN") {
+      // Platform admin sees users of the currently active tenant
+      if (
+        currentUser.activeTenantId &&
+        currentUser.activeTenantId !== hubTenantId
+      ) {
+        whereClause.tenantId = currentUser.activeTenantId;
+      }
+    } else {
+      // Tenant admin/teammate only sees their own tenant's users
+      // AND we explicitly exclude PLATFORM_ADMIN users for security
       if (!currentUser.tenantId) {
         return { success: false, error: "Unauthorized" };
       }
-      whereClause = { tenantId: currentUser.tenantId };
+      whereClause.tenantId = currentUser.tenantId;
+      whereClause.role = { not: "PLATFORM_ADMIN" };
     }
 
     const users = await prisma.user.findMany({
@@ -59,6 +78,10 @@ export async function inviteUser(formData: FormData) {
 
   if (!email || !role || !tenantId) {
     return { success: false, error: "Missing required fields" };
+  }
+
+  if (role === "PLATFORM_ADMIN" || role === "TEAM_ADMIN") {
+    return { success: false, error: "Cannot assign restricted roles" };
   }
 
   try {
@@ -99,6 +122,7 @@ export async function inviteUser(formData: FormData) {
       resourceId: newUser.id,
       details: { email, role, tenantId },
       status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath("/users");
@@ -122,6 +146,10 @@ export async function updateUserRole(userId: string, newRole: Role) {
     const targetUser = await prisma.user.findUnique({ where: { id: userId } });
     if (!targetUser) {
       return { success: false, error: "User not found" };
+    }
+
+    if (newRole === "PLATFORM_ADMIN" || newRole === "TEAM_ADMIN") {
+      return { success: false, error: "Cannot assign restricted roles" };
     }
 
     if (currentUser.role !== "PLATFORM_ADMIN") {
@@ -154,6 +182,16 @@ export async function updateUserRole(userId: string, newRole: Role) {
       data: { role: newRole },
     });
 
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_UPDATED",
+      resource: "User",
+      resourceId: userId,
+      details: { email: targetUser.email, oldRole: targetUser.role, newRole },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
+    });
+
     revalidatePath("/users");
     return { success: true };
   } catch (error) {
@@ -171,6 +209,10 @@ export async function createUserWithPassword(formData: FormData) {
 
   if (!email || !role || !tenantId || !password) {
     return { success: false, error: "Missing required fields" };
+  }
+
+  if (role === "PLATFORM_ADMIN" || role === "TEAM_ADMIN") {
+    return { success: false, error: "Cannot assign restricted roles" };
   }
 
   try {
@@ -220,6 +262,7 @@ export async function createUserWithPassword(formData: FormData) {
       resourceId: newUser.id,
       details: { email, role, tenantId },
       status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${tenantId}`);
@@ -259,10 +302,19 @@ export async function toggleUserStatus(userId: string, isActive: boolean) {
     // Update Cognito
     await toggleUserActiveStatusInCognito(targetUser.email, isActive);
 
-    // Update Database
     await prisma.user.update({
       where: { id: userId },
       data: { isActive },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_UPDATED",
+      resource: "User",
+      resourceId: userId,
+      details: { email: targetUser.email, isActive },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${targetUser.tenantId}`);
@@ -303,6 +355,16 @@ export async function removeUser(userId: string) {
 
     await prisma.user.delete({
       where: { id: userId },
+    });
+
+    void logAudit({
+      userId: currentUser.id,
+      action: "USER_DELETED",
+      resource: "User",
+      resourceId: userId,
+      details: { email: targetUser.email, tenantId: targetUser.tenantId },
+      status: "SUCCESS",
+      ipAddress: await extractIpFromHeaders(),
     });
 
     revalidatePath(`/superadmin/tenants/${targetUser.tenantId}`);

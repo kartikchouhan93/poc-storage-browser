@@ -4,6 +4,7 @@ import {
   AudioWaveform,
   Building,
   Bot,
+  Check,
   ChevronDown,
   Cloud,
   CreditCard,
@@ -97,7 +98,7 @@ interface SidebarUser {
 
 export function AppSidebar({ serverUser }: { serverUser?: SidebarUser }) {
   const pathname = usePathname();
-  const { user: contextUser, logout, loading } = useAuth();
+  const { user: contextUser, logout, loading, tenants, activeTenantId, switchTenant } = useAuth();
 
   // Use server-provided user (available immediately on render) or fall back to client context
   const user = serverUser ?? contextUser;
@@ -113,7 +114,12 @@ export function AppSidebar({ serverUser }: { serverUser?: SidebarUser }) {
       if (group.title === "Collaboration") {
         return {
           ...group,
-          items: group.items.filter(item => item.title !== "Users" && item.title !== "Teams")
+          items: group.items.filter(
+            (item) =>
+              item.title !== "Users" &&
+              item.title !== "Teams" &&
+              item.title !== "Service Accounts",
+          ),
         };
       }
       return group;
@@ -171,10 +177,26 @@ export function AppSidebar({ serverUser }: { serverUser?: SidebarUser }) {
               >
                 <DropdownMenuLabel>Organizations</DropdownMenuLabel>
                 <DropdownMenuSeparator />
-                <DropdownMenuItem>
-                  <Cloud className="mr-2 h-4 w-4" />
-                  {user.tenantName || "Enterprise"}
-                </DropdownMenuItem>
+                {tenants && tenants.length > 0 ? (
+                  tenants.map((t) => (
+                    <DropdownMenuItem
+                      key={t.tenantId}
+                      onClick={() => switchTenant(t.tenantId)}
+                      className="cursor-pointer"
+                    >
+                      <Cloud className="mr-2 h-4 w-4 shrink-0" />
+                      <span className="flex-1">{t.tenantName}</span>
+                      {t.tenantId === activeTenantId && (
+                        <Check className="ml-2 h-3 w-3 text-primary" />
+                      )}
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <DropdownMenuItem>
+                    <Cloud className="mr-2 h-4 w-4" />
+                    {user.tenantName || "Enterprise"}
+                  </DropdownMenuItem>
+                )}
               </DropdownMenuContent>
             </DropdownMenu>
           </SidebarMenuItem>

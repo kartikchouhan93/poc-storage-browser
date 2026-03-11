@@ -84,6 +84,7 @@ export function AuditTable({ logs, pagination }: { logs: any[], pagination?: any
             <TableHead className="hidden md:table-cell">Target</TableHead>
             <TableHead className="hidden lg:table-cell">Bucket</TableHead>
             <TableHead className="hidden lg:table-cell">IP Address</TableHead>
+            <TableHead className="hidden lg:table-cell">Location</TableHead>
             <TableHead>Timestamp</TableHead>
           </TableRow>
         </TableHeader>
@@ -162,6 +163,11 @@ export function AuditTable({ logs, pagination }: { logs: any[], pagination?: any
                   <TableCell className="hidden lg:table-cell text-sm text-muted-foreground font-mono text-xs">
                     {ipDisplay}
                   </TableCell>
+                  <TableCell className="hidden lg:table-cell text-sm text-muted-foreground">
+                    {log.country && log.region
+                      ? `${log.country}, ${log.region}`
+                      : log.country || log.region || "Unknown"}
+                  </TableCell>
                   <TableCell className="text-sm text-muted-foreground whitespace-nowrap">
                     {formatDateTime(new Date(log.createdAt).toISOString())}
                   </TableCell>
@@ -171,7 +177,7 @@ export function AuditTable({ logs, pagination }: { logs: any[], pagination?: any
           })}
           {logs.length === 0 && (
             <TableRow>
-              <TableCell colSpan={6} className="text-center py-8 text-muted-foreground">
+              <TableCell colSpan={7} className="text-center py-8 text-muted-foreground">
                 No audit logs found.
               </TableCell>
             </TableRow>
@@ -212,6 +218,18 @@ export function AuditTable({ logs, pagination }: { logs: any[], pagination?: any
                   <h4 className="text-sm font-medium text-muted-foreground mb-1">IP Address</h4>
                   <p className="text-sm font-mono text-foreground">
                     {selectedLog.ipAddress || (selectedLog.details && selectedLog.details.ip) || "System"}
+                  </p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Country</h4>
+                  <p className="text-sm text-foreground">
+                    {selectedLog.country || "Unknown"}
+                  </p>
+                </div>
+                <div>
+                  <h4 className="text-sm font-medium text-muted-foreground mb-1">Region</h4>
+                  <p className="text-sm text-foreground">
+                    {selectedLog.region || "Unknown"}
                   </p>
                 </div>
                 {selectedLog.resource && (
